@@ -5,7 +5,7 @@ import logging
 
 from .broker_mt5 import MT5Broker
 from .config import Config
-from .model import Action, Signal
+from .model import Action, OrderKind, Signal
 from .parser import parse
 from .risk import RiskManager
 from .state import State
@@ -57,7 +57,24 @@ class Engine:
 
         account = self.broker.account()
         positions = self.broker.positions()
-        decision = self.risk.evaluate_entry(sig, account, positions, spec)
+
+        # Рыночный ордер исполнится по текущей цене, а не по цене из алерта.
+        # Считаем лот от неё, иначе ушедший рынок молча раздувает риск.
+        market_price = None
+        if sig.order_kind is OrderKind.MARKET and sig.side is not None:
+            market_price = self.broker.current_price(mt5_symbol, sig.side)
+            if market_price and sig.entry:
+                slip = abs(market_price - sig.entry)
+                if sig.sl and abs(sig.entry - sig.sl) > 0:
+                    slip_pct = slip / abs(sig.entry - sig.sl) * 100.0
+                    if slip_pct >= 5.0:
+                        log.warning("  ↳ рынок ушёл от сигнала: %s → %s "
+                                    "(%.0f%% от дистанции до SL) — лот считаю "
+                                    "от текущей цены", sig.entry, market_price,
+                                    slip_pct)
+
+        decision = self.risk.evaluate_entry(sig, account, positions, spec,
+                                            market_price=market_price)
 
         if not decision.allow:
             log.info("  ↳ ОТКАЗ риск-менеджера: %s", decision.reason)

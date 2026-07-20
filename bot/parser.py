@@ -83,9 +83,20 @@ def _extract_symbol(segment: str) -> Optional[str]:
     return tokens[-1] if tokens else None
 
 
+def _detect_strategy(text: str) -> str:
+    """CRT и ASIA несут префикс в тексте алерта; SMC-алерты идут без префикса,
+    поэтому всё остальное считаем SMC (см. smc-2koleno-v23-alerts)."""
+    up = text.upper()
+    if "CRT" in up:
+        return "crt"
+    if "ASIA" in up or "АЗИ" in up or "SWEEP" in up:
+        return "asweep"
+    return "smc"
+
+
 def _parse_text(text: str) -> Optional[Signal]:
     is_crt = "CRT" in text
-    strategy = "crt" if is_crt else None
+    strategy = _detect_strategy(text)
 
     # ── Выход / безубыток ────────────────────────────────────────────────────
     if "ВЫХОД" in text.upper():

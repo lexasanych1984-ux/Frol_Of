@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from .config import Config
-from .model import Action, Signal
+from .model import Action, OrderKind, Signal
 from .sizing import SizingResult, SymbolSpec, compute_lots
 from .state import State
 
@@ -42,8 +42,16 @@ class RiskManager:
         self.g = cfg.guards or {}
         self.r = cfg.risk or {}
 
-    def evaluate_entry(self, sig: Signal, account, positions, spec: SymbolSpec) -> Decision:
-        """account: объект с .equity; positions: список открытых позиций брокера."""
+    def evaluate_entry(self, sig: Signal, account, positions, spec: SymbolSpec,
+                       market_price: Optional[float] = None) -> Decision:
+        """account: объект с .equity; positions: список открытых позиций брокера.
+
+        market_price — текущая цена исполнения для РЫНОЧНОГО ордера. Если
+        передана, лот считается от неё, а не от цены из сигнала: рынок мог уйти
+        с момента срабатывания алерта, и тогда реальное расстояние до SL больше
+        заявленного, а риск — выше заданного процента. Для limit/stop ордеров
+        цена известна заранее, поэтому там всегда берётся sig.entry.
+        """
         mt5_symbol = self.cfg.mt5_symbol(sig.symbol_tv) or spec.name
 
         allowed = self.g.get("allowed_symbols") or []
@@ -70,8 +78,10 @@ class RiskManager:
                 return Decision(False,
                                 f"дневной стоп: просадка {dd_pct:.2f}% >= {max_loss_pct}%")
 
-        # Размер лота
+        # Размер лота: для рынка — от цены исполнения, для limit/stop — от sig.entry
         entry_price = sig.entry
+        if sig.order_kind is OrderKind.MARKET and market_price:
+            entry_price = market_price
         res = compute_lots(
             equity=account.equity,
             risk_pct=float(self.r.get("risk_pct_per_trade", 1.0)),

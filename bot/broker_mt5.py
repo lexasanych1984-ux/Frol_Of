@@ -12,6 +12,14 @@ from .config import MT5Creds
 from .model import OrderKind, Side, Signal
 from .sizing import SymbolSpec
 
+# Magic-номер кодирует стратегию: он навсегда сохраняется в истории сделок MT5,
+# по нему run.py stats считает статистику раздельно по стратегиям.
+STRATEGY_MAGIC = {"smc": 770001, "crt": 770002, "asweep": 770003}
+DEFAULT_MAGIC = 770077  # сигнал без распознанной стратегии
+
+def magic_for(strategy: Optional[str]) -> int:
+    return STRATEGY_MAGIC.get((strategy or "").lower(), DEFAULT_MAGIC)
+
 
 @dataclass
 class Account:
@@ -99,6 +107,53 @@ class MT5Broker:
         )
 
     # ── Исполнение ────────────────────────────────────────────────────────────
+    AUTOTRADING_HINT = (
+        "в терминале MT5 ВЫКЛЮЧЕНА «Алго-торговля» — ордера отклоняются "
+        "(retcode 10027). Включи кнопку «Алго-торговля» на панели терминала "
+        "(или Сервис → Настройки → Советники → Разрешить алгоритмическую "
+        "торговлю) — сигнал будет потерян, пока она выключена"
+    )
+
+    def autotrading_enabled(self) -> Optional[bool]:
+        """Состояние кнопки «Алго-торговля» в терминале (None — терминал молчит).
+
+        Сервер может разрешать торговлю советниками (account_info.trade_expert),
+        но локальный тумблер терминала всё равно рубит ордера.
+        """
+        ti = self.mt5.terminal_info()
+        return None if ti is None else bool(ti.trade_allowed)
+
+    def _wrong_account(self) -> Optional[str]:
+        """Предполётная проверка перед каждой торговой операцией.
+
+        1) Терминал мог быть вручную переключён на другой счёт — тогда ордера
+           улетели бы на него, поэтому сверяем логин.
+        2) Могла быть выключена «Алго-торговля» — ловим это ДО отправки, чтобы
+           в логе была понятная причина, а не голый retcode.
+        """
+        i = self.mt5.account_info()
+        if i is None:
+            return f"нет связи со счётом: {self.mt5.last_error()}"
+        if self.creds.login and i.login != self.creds.login:
+            return (f"в терминале активен ДРУГОЙ счёт ({i.login} @ {i.server}), "
+                    f"ожидался {self.creds.login} — операция отменена")
+        if self.autotrading_enabled() is False:
+            return self.AUTOTRADING_HINT
+        return None
+
+    def current_price(self, symbol: str, side: Side) -> Optional[float]:
+        """Цена, по которой прямо сейчас исполнится рыночный ордер.
+
+        Покупка идёт по ask, продажа — по bid. Нужна для сайзинга: лот обязан
+        считаться от реальной цены исполнения, иначе при уходе рынка от цены
+        из сигнала фактический риск не совпадёт с заданным процентом.
+        """
+        tick = self.mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return None
+        price = tick.ask if side is Side.LONG else tick.bid
+        return float(price) or None
+
     def _filling(self, symbol: str):
         """Подобрать поддерживаемый режим исполнения для символа."""
         info = self.mt5.symbol_info(symbol)
@@ -112,6 +167,9 @@ class MT5Broker:
 
     def place_entry(self, sig: Signal, lots: float, symbol: str,
                     comment: str = "bybit-tradfi-bot") -> OrderResult:
+        err = self._wrong_account()
+        if err:
+            return OrderResult(False, err)
         mt5 = self.mt5
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
@@ -124,8 +182,8 @@ class MT5Broker:
             "sl": float(sig.sl) if sig.sl else 0.0,
             "tp": float(sig.tp) if sig.tp else 0.0,
             "deviation": 20,
-            "magic": 770077,
-            "comment": comment,
+            "magic": magic_for(sig.strategy),
+            "comment": f"bot:{(sig.strategy or 'unknown')}",
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": self._filling(symbol),
         }
@@ -151,6 +209,9 @@ class MT5Broker:
 
     def modify_sl_to_entry(self, symbol: str, side: Side) -> OrderResult:
         """Перенести стоп в безубыток (к цене открытия) для позиции по символу."""
+        err = self._wrong_account()
+        if err:
+            return OrderResult(False, err)
         mt5 = self.mt5
         for p in self.positions():
             if p.symbol == symbol and p.side == side:
@@ -167,6 +228,9 @@ class MT5Broker:
         return OrderResult(False, f"нет позиции по {symbol} {side.value}")
 
     def close_position(self, symbol: str, side: Side) -> OrderResult:
+        err = self._wrong_account()
+        if err:
+            return OrderResult(False, err)
         mt5 = self.mt5
         for p in self.positions():
             if p.symbol == symbol and p.side == side:

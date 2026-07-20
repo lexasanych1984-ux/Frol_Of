@@ -5,6 +5,7 @@
   python run.py check            проверить связь с MT5, показать счёт и символы
   python run.py dryrun-samples   прогнать примеры алертов без MT5 (безопасно)
   python run.py trade            живой цикл (демо; DRY_RUN из .env)
+  python run.py stats [дней]     статистика по стратегиям из истории MT5 + CSV
 """
 from __future__ import annotations
 
@@ -62,8 +63,8 @@ def cmd_dryrun_samples(cfg, log):
     state = State(":memory:")
     # уникальные ключи, чтобы дедуп не глотал разные примеры
     state.is_duplicate = lambda *a, **k: False  # type: ignore
-    engine = Engine(cfg, FakeBroker(equity=10000.0), state)
-    log.info("Прогон %d примеров через парсер + сайзинг (equity=10000 USD):", len(SAMPLES))
+    engine = Engine(cfg, FakeBroker(equity=100000.0), state)
+    log.info("Прогон %d примеров через парсер + сайзинг (equity=100000 USD, как на демо):", len(SAMPLES))
     for msg in SAMPLES:
         log.info("-" * 60)
         engine.handle_raw(msg)
@@ -78,6 +79,13 @@ def cmd_trade(cfg, log):
     acc = broker.account()
     log.info("Подключено: счёт %s equity=%.2f %s", acc.login, acc.equity, acc.currency)
 
+    # Без этой кнопки терминал молча рубит КАЖДЫЙ ордер (retcode 10027),
+    # а сигнал восстановить нельзя — предупреждаем громко и заранее.
+    if not cfg.dry_run and broker.autotrading_enabled() is False:
+        log.warning("!" * 60)
+        log.warning("⚠️  %s", broker.AUTOTRADING_HINT)
+        log.warning("!" * 60)
+
     state = State()
     state.prune()
     engine = Engine(cfg, broker, state)
@@ -90,6 +98,7 @@ def cmd_trade(cfg, log):
         from bot.signals.cdp_source import CdpSignalSource
         src = CdpSignalSource(cfg.cdp_port)
         log.info("CDP-чтение алертов TradingView с порта %d", cfg.cdp_port)
+        src.report_recent_fires()
 
     src.start()
     log.info("Ожидание сигналов... (Ctrl+C для выхода)")
@@ -107,6 +116,45 @@ def cmd_trade(cfg, log):
         state.close()
 
 
+def cmd_stats(cfg, log):
+    """Статистика по закрытым сделкам из истории MT5, раздельно по стратегиям."""
+    from bot import stats as st
+    from bot.broker_mt5 import MT5Broker
+    days = int(sys.argv[2]) if len(sys.argv) > 2 else 365
+    broker = MT5Broker(cfg.mt5)
+    broker.connect()
+    # MT5-имена мини-контрактов → тикеры TradingView (GER30m → GER40 и т.д.),
+    # чтобы отчёт и Notion-база говорили на языке стратегий.
+    tv_names = {mt5sym: tv for tv, mt5sym in cfg.symbol_map.items()}
+    trades = st.collect_closed(broker.mt5, days=days, symbol_alias=tv_names)
+    if not trades:
+        log.info("Закрытых сделок за %d дн. пока нет.", days)
+    else:
+        log.info("Закрытых сделок за %d дн.: %d", days, len(trades))
+        log.info("-" * 78)
+        for row in st.summarize(trades):
+            log.info("  %-14s сделок=%-4s winrate=%-5s net=%-10s PF=%-5s "
+                     "ср+=%-8s ср-=%-8s макс-=%s",
+                     row["стратегия"], row["сделок"], row["winrate"], row["net_pnl"],
+                     row["profit_factor"], row["ср.плюс"], row["ср.минус"], row["макс.минус"])
+        # стартовый баланс = текущий минус P&L всех закрытых сделок
+        acc = broker.account()
+        start_balance = acc.balance - sum(t.profit for t in trades)
+        csv_path = cfgmod.ROOT / "logs" / "trades.csv"
+        st.write_csv(trades, csv_path, start_balance=start_balance)
+        log.info("-" * 78)
+        log.info("Полный список сделок: %s (открывается в Excel)", csv_path)
+    opened = st.open_positions(broker.mt5)
+    if opened:
+        log.info("Открытых позиций сейчас: %d", len(opened))
+        for p in opened:
+            log.info("  %(символ)s %(сторона)s %(лот)s лот [%(стратегия)s] "
+                     "вход=%(вход)s SL=%(SL)s TP=%(TP)s | плавающий P&L=%(плавающий P&L)s", p)
+    else:
+        log.info("Открытых позиций сейчас нет.")
+    broker.shutdown()
+
+
 def main():
     cfg = cfgmod.load()
     log = logutil.setup(cfg.logging_cfg.get("level", "INFO"),
@@ -120,8 +168,10 @@ def main():
         cmd_dryrun_samples(cfg, log)
     elif cmd == "trade":
         cmd_trade(cfg, log)
+    elif cmd == "stats":
+        cmd_stats(cfg, log)
     else:
-        log.error("Неизвестная команда %r. Доступно: check | dryrun-samples | trade", cmd)
+        log.error("Неизвестная команда %r. Доступно: check | dryrun-samples | trade | stats", cmd)
         sys.exit(2)
 
 

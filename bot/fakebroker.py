@@ -8,11 +8,12 @@ from .model import Side, Signal
 from .sizing import SymbolSpec
 
 # Приблизительные параметры инструментов (для оффлайн-демо; на реале берутся из MT5).
+# Значения сняты с реальных symbol_info демо-сервера Just2Trade-MT5 (2026-07-18).
 _SPECS = {
-    "EURUSD.s": SymbolSpec("EURUSD.s", 0.01, 100.0, 0.01, 0.00001, 1.0),
-    "GBPJPY.s": SymbolSpec("GBPJPY.s", 0.01, 100.0, 0.01, 0.001, 0.68),
-    "GER40.s":  SymbolSpec("GER40.s", 0.01, 100.0, 0.01, 0.01, 0.01),
-    "NAS100.s": SymbolSpec("NAS100.s", 0.1, 100.0, 0.1, 0.01, 0.01),
+    "EURUSD":     SymbolSpec("EURUSD", 0.01, 1000.0, 0.01, 0.00001, 1.0),
+    "GBPJPY":     SymbolSpec("GBPJPY", 0.01, 1000.0, 0.01, 0.001, 0.62),
+    "GER30m":     SymbolSpec("GER30m", 1.0, 300.0, 1.0, 0.1, 0.1),
+    "USTECH100m": SymbolSpec("USTECH100m", 1.0, 300.0, 1.0, 0.1, 0.1),
 }
 
 
