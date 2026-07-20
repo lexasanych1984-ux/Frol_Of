@@ -101,11 +101,16 @@ class Engine:
             log.info("  ↳ БУ проигнорирован (config exits.on_breakeven)")
             return
         mt5_symbol = self.cfg.mt5_symbol(sig.symbol_tv)
-        if not mt5_symbol or sig.side is None:
-            log.warning("  ↳ БУ: нет символа/стороны")
+        if not mt5_symbol:
+            log.warning("  ↳ БУ: нет карты символа для %s", sig.symbol_tv)
             return
+        # Сторона не обязательна: CRT шлёт "CRT ВЫХОД GER40 (после БУ)" без
+        # long/short. Раньше такой алерт молча отбрасывался, и стоп у CRT
+        # никогда не уезжал в безубыток. По символу позиция всё равно одна
+        # (guards.max_open_positions_per_symbol=1).
+        where = f"{mt5_symbol} {sig.side.value}" if sig.side else mt5_symbol
         if self.cfg.dry_run:
-            log.info("  ↳ [DRY_RUN] перенёс бы SL в безубыток %s %s", mt5_symbol, sig.side.value)
+            log.info("  ↳ [DRY_RUN] перенёс бы SL в безубыток %s", where)
             return
         res = self.broker.modify_sl_to_entry(mt5_symbol, sig.side)
         log.info("  ↳ БУ %s: %s", "✅" if res.ok else "⚠️", res.detail)
@@ -117,11 +122,13 @@ class Engine:
             log.info("  ↳ выход проигнорирован — SL/TP уже на ордере (exits.on_exit_alert=ignore)")
             return
         mt5_symbol = self.cfg.mt5_symbol(sig.symbol_tv)
-        if not mt5_symbol or sig.side is None:
-            log.warning("  ↳ выход: нет символа/стороны")
+        if not mt5_symbol:
+            log.warning("  ↳ выход: нет карты символа для %s", sig.symbol_tv)
             return
+        # Сторона тоже необязательна — см. комментарий в _handle_breakeven.
         if self.cfg.dry_run:
-            log.info("  ↳ [DRY_RUN] закрыл бы позицию %s %s", mt5_symbol, sig.side.value)
+            log.info("  ↳ [DRY_RUN] закрыл бы позицию %s %s", mt5_symbol,
+                     sig.side.value if sig.side else "(любую)")
             return
         res = self.broker.close_position(mt5_symbol, sig.side)
         log.info("  ↳ закрытие %s: %s", "✅" if res.ok else "⚠️", res.detail)

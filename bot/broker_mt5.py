@@ -207,33 +207,51 @@ class MT5Broker:
         return OrderResult(ok, f"retcode={res.retcode} {res.comment}",
                            ticket=getattr(res, "order", None), raw=res)
 
-    def modify_sl_to_entry(self, symbol: str, side: Side) -> OrderResult:
-        """Перенести стоп в безубыток (к цене открытия) для позиции по символу."""
-        err = self._wrong_account()
-        if err:
-            return OrderResult(False, err)
-        mt5 = self.mt5
-        for p in self.positions():
-            if p.symbol == symbol and p.side == side:
-                req = {
-                    "action": mt5.TRADE_ACTION_SLTP,
-                    "position": p.ticket,
-                    "symbol": symbol,
-                    "sl": p.price_open,
-                    "tp": p.tp,
-                }
-                res = mt5.order_send(req)
-                ok = res is not None and res.retcode == mt5.TRADE_RETCODE_DONE
-                return OrderResult(ok, f"BE retcode={getattr(res,'retcode',None)}", raw=res)
-        return OrderResult(False, f"нет позиции по {symbol} {side.value}")
+    def modify_sl_to_entry(self, symbol: str, side: Optional[Side] = None) -> OrderResult:
+        """Перенести стоп в безубыток (к цене открытия) для позиции по символу.
 
-    def close_position(self, symbol: str, side: Side) -> OrderResult:
+        side=None — сторона в алерте не указана. Так шлёт CRT: её алерт
+        безубытка выглядит как "CRT ВЫХОД GER40 (после БУ)", без long/short.
+        Тогда двигаем стоп у всех позиций по символу — при
+        guards.max_open_positions_per_symbol=1 она там всё равно одна.
+        """
+        err = self._wrong_account()
+        if err:
+            return OrderResult(False, err)
+        mt5 = self.mt5
+        done, failed = [], []
+        for p in self.positions():
+            if p.symbol != symbol or (side is not None and p.side != side):
+                continue
+            req = {
+                "action": mt5.TRADE_ACTION_SLTP,
+                "position": p.ticket,
+                "symbol": symbol,
+                "sl": p.price_open,
+                "tp": p.tp,
+            }
+            res = mt5.order_send(req)
+            if res is not None and res.retcode == mt5.TRADE_RETCODE_DONE:
+                done.append(p.ticket)
+            else:
+                failed.append(f"{p.ticket}:{getattr(res, 'retcode', None)}")
+
+        where = f"{symbol}" + (f" {side.value}" if side else "")
+        if not done and not failed:
+            return OrderResult(False, f"нет позиции по {where}")
+        if failed:
+            return OrderResult(False, f"BE {where}: перенесено {done}, ошибки {failed}")
+        return OrderResult(True, f"BE {where}: стоп в безубыток, позиций {len(done)}")
+
+    def close_position(self, symbol: str, side: Optional[Side] = None) -> OrderResult:
+        """side=None — закрыть позицию по символу независимо от стороны
+        (алерты выхода CRT тоже идут без long/short)."""
         err = self._wrong_account()
         if err:
             return OrderResult(False, err)
         mt5 = self.mt5
         for p in self.positions():
-            if p.symbol == symbol and p.side == side:
+            if p.symbol == symbol and (side is None or p.side == side):
                 tick = mt5.symbol_info_tick(symbol)
                 closing_long = p.side is Side.LONG
                 req = {
@@ -251,4 +269,4 @@ class MT5Broker:
                 res = mt5.order_send(req)
                 ok = res is not None and res.retcode == mt5.TRADE_RETCODE_DONE
                 return OrderResult(ok, f"close retcode={getattr(res,'retcode',None)}", raw=res)
-        return OrderResult(False, f"нет позиции по {symbol} {side.value}")
+        return OrderResult(False, "нет позиции по " + symbol + (f" {side.value}" if side else ""))
