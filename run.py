@@ -9,6 +9,8 @@
   python run.py report [месяц]   факт демо ↔ коридор бэктеста (деградация эджа);
                                  месяц: YYYY-MM | MM | last | (пусто = текущий);
                                  добавь 'notify' — отправить сводку в Telegram
+  python run.py webhook-selftest проверить цепочку облачного буфера (POST /hook →
+                                 GET /pull round-trip), MT5 НЕ трогает
 """
 from __future__ import annotations
 
@@ -128,20 +130,44 @@ def cmd_trade(cfg, log):
     log.info("Лог проскальзывания: %s | тревога о риске при +%.2f п.п. сверх заданного",
              cfg.exec_log_path(), overshoot)
 
+    # Быстрый локальный канал (CDP или loopback-http).
     if cfg.signal_source == "http":
         from bot.signals.http_source import HttpSignalSource
-        src = HttpSignalSource(cfg.http_host, cfg.http_port, cfg.http_secret)
+        local_src = HttpSignalSource(cfg.http_host, cfg.http_port, cfg.http_secret)
         log.info("HTTP-приёмник: http://%s:%d (loopback)", cfg.http_host, cfg.http_port)
     else:
         from bot.signals.cdp_source import CdpSignalSource
-        src = CdpSignalSource(cfg.cdp_port)
+        local_src = CdpSignalSource(cfg.cdp_port)
         log.info("CDP-чтение алертов TradingView с порта %d", cfg.cdp_port)
-        src.report_recent_fires()
+        local_src.report_recent_fires()
 
+    # Надёжный резервный канал: pull из облачного store-and-forward буфера.
+    # Работает ПАРАЛЛЕЛЬНО, дедуп с локальным каналом — в движке по хэшу.
+    webhook_src = None
+    if cfg.webhook.enabled:
+        from bot.signals.webhook_source import WebhookPullSource
+        webhook_src = WebhookPullSource(
+            cfg.webhook.pull_url, cfg.webhook.token, state,
+            poll_interval_sec=cfg.webhook.poll_interval_sec,
+            pull_limit=cfg.webhook.pull_limit,
+            request_timeout=cfg.webhook.request_timeout)
+        log.info("Webhook-буфер: pull %s каждые %d с (вход max_age=%dм, БУ/выход=%dм)",
+                 cfg.webhook.pull_url, cfg.webhook.poll_interval_sec,
+                 cfg.freshness.entry_max_age_sec // 60,
+                 cfg.freshness.manage_max_age_sec // 60)
+    else:
+        log.info("Webhook-буфер ВЫКЛЮЧЕН (задай WEBHOOK_PULL_URL/WEBHOOK_TOKEN в .env "
+                 "для облачного резерва — иначе сигналы за простой теряются).")
+
+    if webhook_src is not None:
+        from bot.signals.composite import CompositeSource
+        src = CompositeSource([local_src, webhook_src])
+    else:
+        src = local_src
     src.start()
 
-    monitor = HealthMonitor(notifier, cfg, broker=broker, source=src,
-                            metrics=metrics)
+    monitor = HealthMonitor(notifier, cfg, broker=broker, source=local_src,
+                            metrics=metrics, webhook_source=webhook_src)
     # Живая тревога о серии стопов сверх исторического максимума (второе из двух
     # немедленных событий). Опрашивает историю MT5 раз в edge_check_interval_sec.
     edge = None
@@ -165,10 +191,11 @@ def cmd_trade(cfg, log):
     log.info("Ожидание сигналов... (Ctrl+C для выхода). Мониторинг живости включён.")
     try:
         while True:
-            raw = src.poll(poll_timeout)
-            if raw is not None:
+            rs = src.poll(poll_timeout)
+            if rs is not None:
                 try:
-                    engine.handle_raw(raw)
+                    engine.handle_raw(rs.raw, received_ts=rs.received_ts,
+                                      source=rs.source, ext_id=rs.ext_id)
                 except Exception as e:  # один плохой сигнал не должен ронять бота
                     log.exception("Ошибка обработки сигнала: %s", e)
             monitor.maybe_tick()
@@ -325,6 +352,71 @@ def cmd_report(cfg, log):
         log.info("Telegram-сводка: %s", "отправлена" if ok else "НЕ отправлена")
 
 
+def cmd_webhook_selftest(cfg, log):
+    """Round-trip облачного буфера: POST тестового тела в /hook → GET /pull.
+
+    Проверяет всю цепочку приёмника (TLS, токен, запись, выдача) без MT5 и без
+    движка. Тело намеренно НЕ является торговым сигналом (не распарсится как ордер).
+    """
+    import time as _t
+
+    import requests
+
+    if not cfg.webhook.enabled:
+        log.error("Webhook-буфер не настроен: задай WEBHOOK_PULL_URL и WEBHOOK_TOKEN "
+                  "в .env (см. cloud/README.md).")
+        sys.exit(2)
+    base, token = cfg.webhook.pull_url, cfg.webhook.token
+    to = cfg.webhook.request_timeout
+    body = f"SELFTEST {int(_t.time())} — проверка цепочки webhook (не сигнал)"
+
+    log.info("Webhook-selftest → %s", base)
+    try:
+        head = requests.get(f"{base}/head/{token}", timeout=to)
+        head.raise_for_status()
+        after = int((head.json() or {}).get("max_id") or 0)
+        log.info("  /head ok: max_id=%d", after)
+    except Exception as e:
+        log.error("  /head ПРОВАЛ: %s (проверь URL/токен/сеть)", e)
+        sys.exit(1)
+
+    t0 = _t.time()
+    try:
+        post = requests.post(f"{base}/hook/{token}", data=body.encode("utf-8"),
+                             headers={"Content-Type": "text/plain; charset=utf-8"},
+                             timeout=to)
+        log.info("  POST /hook → %s (%.0f мс)", post.status_code,
+                 (_t.time() - t0) * 1000)
+        if post.status_code != 200:
+            log.error("  приёмник ответил не 200: %s", post.text[:200])
+            sys.exit(1)
+    except Exception as e:
+        log.error("  POST /hook ПРОВАЛ: %s", e)
+        sys.exit(1)
+
+    deadline = _t.time() + 15
+    while _t.time() < deadline:
+        try:
+            pull = requests.get(f"{base}/pull/{token}",
+                                params={"after": after, "limit": 50}, timeout=to)
+            pull.raise_for_status()
+            recs = pull.json() or []
+        except Exception as e:
+            log.error("  GET /pull ПРОВАЛ: %s", e)
+            sys.exit(1)
+        hit = next((r for r in recs if r.get("body") == body), None)
+        if hit:
+            log.info("  ✅ round-trip ok: запись id=%s вернулась через /pull "
+                     "(%.0f мс полный цикл).", hit.get("id"), (_t.time() - t0) * 1000)
+            log.info("Цепочка облачного буфера РАБОТАЕТ. Дедуп-повтор POST того же "
+                     "тела не создаст вторую запись (проверка в cloud/README.md).")
+            return
+        _t.sleep(1)
+    log.error("  ❌ отправленная запись не вернулась через /pull за 15 с — "
+              "проверь Worker (логи wrangler tail) и схему D1.")
+    sys.exit(1)
+
+
 def main():
     cfg = cfgmod.load()
     log = logutil.setup(cfg.logging_cfg.get("level", "INFO"),
@@ -342,9 +434,11 @@ def main():
         cmd_stats(cfg, log)
     elif cmd == "report":
         cmd_report(cfg, log)
+    elif cmd == "webhook-selftest":
+        cmd_webhook_selftest(cfg, log)
     else:
         log.error("Неизвестная команда %r. Доступно: check | dryrun-samples | "
-                  "trade | stats | report", cmd)
+                  "trade | stats | report | webhook-selftest", cmd)
         sys.exit(2)
 
 

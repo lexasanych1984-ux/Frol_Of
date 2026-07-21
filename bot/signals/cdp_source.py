@@ -49,7 +49,24 @@ log = logging.getLogger("bot")
 _SEEN_MAX = 500
 
 
+def _fire_time_to_epoch(fire_time) -> Optional[float]:
+    """ISO-время срабатывания TradingView (``2026-07-20T10:14:47Z``, UTC) → epoch.
+
+    Тот же приём, что в ``report_recent_fires``: strptime даёт struct как локальное,
+    mktime интерпретирует его как локальное — вычитаем timezone, получаем UTC-epoch.
+    При любой неудаче — None (гейт свежести тогда считает сигнал свежим).
+    """
+    if not fire_time:
+        return None
+    try:
+        return time.mktime(time.strptime(fire_time, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+    except (ValueError, TypeError):
+        return None
+
+
 class CdpSignalSource(SignalSource):
+    name = "cdp"
+
     def __init__(self, port: int = 9222, reconnect_sec: float = 5.0):
         super().__init__()
         self.port = port
@@ -127,9 +144,12 @@ class CdpSignalSource(SignalSource):
         fire_id = str(p.get("fire_id") or f"{p.get('alert_id')}_{p.get('fire_time')}")
         if not self._mark_seen(fire_id):
             return
+        fire_time = p.get("fire_time")
         log.info("АЛЕРТ СРАБОТАЛ (fire_id=%s, %s): %s",
-                 fire_id, p.get("fire_time"), message)
-        self.q.put(message)
+                 fire_id, fire_time, message)
+        # received_ts = момент срабатывания (fire_time). Живой CDP всегда свежий,
+        # но метка страхует гейт свежести от переигрывания старого кадра.
+        self._put(message, received_ts=_fire_time_to_epoch(fire_time), ext_id=fire_id)
 
     # ── Основной цикл ─────────────────────────────────────────────────────────
     def _loop(self):

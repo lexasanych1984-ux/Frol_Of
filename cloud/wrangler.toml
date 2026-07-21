@@ -1,0 +1,17 @@
+# Конфигурация Cloudflare Worker для облачного буфера сигналов.
+# Деплой и настройка — cloud/README.md. Секрет HOOK_TOKEN задаётся ОТДЕЛЬНО
+# (`wrangler secret put HOOK_TOKEN`), в этот файл его НЕ вписывать.
+
+name = "bybit-signals"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Привязка базы D1. database_id подставляется после `wrangler d1 create bybit-signals`.
+[[d1_databases]]
+binding = "DB"
+database_name = "bybit-signals"
+database_id = "08256f5f-445b-4401-9cf3-d281620ed8b9"
+
+# Ежедневная очистка старше 7 дней (03:17 UTC — «тихое» время).
+[triggers]
+crons = ["17 3 * * *"]

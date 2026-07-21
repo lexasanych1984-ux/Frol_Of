@@ -1,13 +1,14 @@
-"""Главный движок: сигнал → парсинг → дедуп → риск → исполнение."""
+"""Главный движок: сигнал → парсинг → дедуп → возраст → риск → исполнение."""
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
 from . import execlog, slippage
 from .broker_mt5 import MT5Broker, OrderResult
-from .config import Config
+from .config import Config, FreshnessCfg
 from .model import Action, OrderKind, Side, Signal
 from .parser import parse
 from .risk import Decision, RiskManager
@@ -35,14 +36,24 @@ class Engine:
         # Порог тревоги «риск выше заданного» в проц. пунктах.
         self.risk_overshoot_pp = (risk_overshoot_pp
                                   if risk_overshoot_pp is not None else 0.3)
+        # Защита протухших сигналов (общая для всех источников). getattr —
+        # чтобы движок работал и со «скелетным» Config из юнит-тестов.
+        self.freshness: FreshnessCfg = getattr(cfg, "freshness", None) or FreshnessCfg()
 
-    def handle_raw(self, raw_message: str) -> None:
-        """Обработать одно сырое alert_message."""
+    def handle_raw(self, raw_message: str, *, received_ts: Optional[float] = None,
+                   source: Optional[str] = None, ext_id: Optional[str] = None) -> None:
+        """Обработать одно сырое alert_message.
+
+        received_ts — epoch, когда сигнал сработал/принят «наверху» (для гейта
+        свежести); source/ext_id — канал и внешний id (для лога/трассировки).
+        Вызов только со строкой (dry-run, тесты) остаётся валидным.
+        """
         sig = parse(raw_message)
         if sig is None:
             log.warning("Не распознан алерт: %r", raw_message[:200])
             return
-        log.info("СИГНАЛ: %s", sig)
+        tag = f" [{source}{'#' + ext_id if ext_id else ''}]" if source else ""
+        log.info("СИГНАЛ%s: %s", tag, sig)
         if self.metrics is not None:
             self.metrics.on_signal()
 
@@ -51,6 +62,8 @@ class Engine:
             return
 
         try:
+            if not self._fresh_enough(sig, received_ts, source):
+                return
             if sig.action is Action.ENTRY:
                 self._handle_entry(sig)
             elif sig.action is Action.BREAKEVEN:
@@ -59,6 +72,44 @@ class Engine:
                 self._handle_exit(sig)
         finally:
             self.state.mark_seen(sig.dedup_key())
+
+    # ── Защита протухших сигналов ─────────────────────────────────────────────
+    def _fresh_enough(self, sig: Signal, received_ts: Optional[float],
+                      source: Optional[str]) -> bool:
+        """False → сигнал слишком стар, исполнять нельзя (уведомляем, помечаем seen).
+
+        Вход старше entry_max_age (цена устарела) не исполняется. БУ/выход — с
+        бОльшим лимитом manage_max_age: позиция уже открыта, управлять ею и с
+        задержкой корректно. received_ts=None → возраст неизвестен, не блокируем.
+        """
+        if received_ts is None:
+            return True
+        age = time.time() - received_ts
+        if age <= 0:
+            return True  # часы «в будущем» — не наша забота блокировать
+        if sig.action is Action.ENTRY:
+            limit, kind = self.freshness.entry_max_age(sig.strategy), "вход"
+        else:
+            limit, kind = self.freshness.manage_max_age_sec, "управление позицией"
+        if age <= limit:
+            return True
+        self._alert_stale(sig, age, limit, source, kind)
+        return False
+
+    def _alert_stale(self, sig: Signal, age: float, limit: float,
+                     source: Optional[str], kind: str) -> None:
+        am, lm = int(age // 60), int(limit // 60)
+        src = f" (source={source})" if source else ""
+        msg = (f"⏳ Пропущен по возрасту · {kind.upper()} "
+               f"{(sig.strategy or '?').upper()} {sig.symbol_tv or ''}\n"
+               f"Возраст {am} мин > лимит {lm} мин{src}. "
+               f"Сигнал НЕ исполнен (цена устарела).")
+        log.warning("  ↳ %s", " | ".join(p.strip() for p in msg.splitlines()))
+        if self.notifier is not None:
+            try:
+                self.notifier.send(msg)
+            except Exception as e:
+                log.warning("Не удалось отправить тревогу о возрасте: %s", e)
 
     # ── Вход ──────────────────────────────────────────────────────────────────
     def _handle_entry(self, sig: Signal) -> None:

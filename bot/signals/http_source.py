@@ -18,6 +18,8 @@ from .base import SignalSource
 
 
 class HttpSignalSource(SignalSource):
+    name = "http"
+
     def __init__(self, host: str = "127.0.0.1", port: int = 8787, secret: str = ""):
         super().__init__()
         self.host, self.port, self.secret = host, port, secret
@@ -25,7 +27,7 @@ class HttpSignalSource(SignalSource):
         self._thread = None
 
     def start(self) -> None:
-        q, secret = self.q, self.secret
+        src, secret = self, self.secret
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *a):  # тише в консоли
@@ -49,7 +51,7 @@ class HttpSignalSource(SignalSource):
                     except ValueError:
                         msg = body
                 if msg:
-                    q.put(msg)
+                    src._put(msg)
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"ok")

@@ -246,6 +246,39 @@ def test_daily_summary_fires_at_time_once_per_day():
     assert len(n.sent) == 2
 
 
+# ── Пятая проверка «webhook» (опциональная) ───────────────────────────────────
+class _DownWebhook:
+    def health(self, now, stale_sec):
+        return (False, "буфер недоступен", "проверь worker")
+
+
+def test_webhook_check_absent_by_default():
+    # Без webhook_source — ровно 4 проверки, поведение прежнее.
+    m = mk()
+    assert m.check_order == ["signal", "mt5_login", "terminal_algo", "expert"]
+
+
+def test_webhook_check_added_when_source_present():
+    cfg = FakeCfg()
+    broker = FakeBroker(Mt5Health(True, 245169, True, True))
+    m = HealthMonitor(DummyNotifier(), cfg, broker=broker, source=FakeSource(),
+                      webhook_source=FakeSource())
+    keys = [r.key for r in m.collect(1000)]
+    assert keys == ["signal", "mt5_login", "terminal_algo", "expert", "webhook"]
+    assert m.evaluate(m.collect(1000), 1000) == []          # всё ок — тихо
+    # суточная сводка отражает 5/5
+    assert "5/5" in m._summary_text(1000)
+
+
+def test_webhook_failure_notifies_with_its_title():
+    cfg = FakeCfg()
+    broker = FakeBroker(Mt5Health(True, 245169, True, True))
+    m = HealthMonitor(DummyNotifier(), cfg, broker=broker, source=FakeSource(),
+                      webhook_source=_DownWebhook())
+    msgs = m.evaluate(m.collect(2000), 2000)
+    assert any("Резервный webhook-буфер" in x and "буфер недоступен" in x for x in msgs)
+
+
 def test_daily_summary_skipped_first_day_if_started_after_time():
     m = mk()
     n = m.notifier

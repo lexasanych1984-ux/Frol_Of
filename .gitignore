@@ -13,3 +13,8 @@ state.db
 state.json
 logs/
 *.log
+
+# cloud (Cloudflare Worker) — локальные артефакты деплоя
+cloud/node_modules/
+cloud/.wrangler/
+cloud/package-lock.json

@@ -43,6 +43,12 @@ CHECK_TITLES = {
 }
 CHECK_ORDER = list(CHECK_TITLES)
 
+# Опциональные проверки — включаются, только если задан соответствующий источник.
+# Держим отдельно от CHECK_TITLES, чтобы CHECK_ORDER (и тесты на «4/4») не менялись.
+OPTIONAL_TITLES = {
+    "webhook": "Резервный webhook-буфер",
+}
+
 
 @dataclass
 class CheckResult:
@@ -124,12 +130,13 @@ class HealthMonitor:
     """
 
     def __init__(self, notifier, cfg, broker=None, source=None,
-                 metrics: Optional[HealthMetrics] = None,
+                 metrics: Optional[HealthMetrics] = None, webhook_source=None,
                  clock: Callable[[], float] = time.time):
         self.notifier = notifier
         self.cfg = cfg
         self.broker = broker
         self.source = source
+        self.webhook_source = webhook_source
         self.metrics = metrics or HealthMetrics(clock=clock)
         self.clock = clock
 
@@ -138,8 +145,17 @@ class HealthMonitor:
         self.cdp_stale = getattr(h, "cdp_stale_sec", 600)
         self.antispam = getattr(h, "antispam_sec", 1800)
         self.daily_at = getattr(h, "daily_summary_at", "09:00")
+        self.webhook_stale = getattr(getattr(cfg, "webhook", None), "stale_sec", 90)
 
-        self._states = {k: _CheckState() for k in CHECK_ORDER}
+        # Порядок и заголовки проверок — инстансные: 4 базовых + webhook, если он
+        # задан. Когда webhook выключен, всё идентично прежнему (тесты «4/4» целы).
+        self.check_order = list(CHECK_ORDER)
+        self.titles = dict(CHECK_TITLES)
+        if webhook_source is not None:
+            self.check_order.append("webhook")
+            self.titles["webhook"] = OPTIONAL_TITLES["webhook"]
+
+        self._states = {k: _CheckState() for k in self.check_order}
         self._last_ok_count = 0
         self._last_tick = 0.0
         self._last_summary_day: Optional[str] = None
@@ -163,7 +179,7 @@ class HealthMonitor:
         return msgs
 
     def _process(self, st: _CheckState, r: CheckResult, now: float) -> List[str]:
-        title = CHECK_TITLES.get(r.key, r.key)
+        title = self.titles.get(r.key, r.key)
         out: List[str] = []
         if r.ok:
             if st.status == "fail" and st.announced:
@@ -200,10 +216,22 @@ class HealthMonitor:
     # ── Сбор реальных проверок (ввод-вывод) ───────────────────────────────────
     def collect(self, now: Optional[float] = None) -> List[CheckResult]:
         now = self.clock() if now is None else now
-        return [
+        results = [
             self._check_signal(now),
             *self._check_mt5(now),
         ]
+        if self.webhook_source is not None:
+            results.append(self._check_webhook(now))
+        return results
+
+    def _check_webhook(self, now: float) -> CheckResult:
+        try:
+            ok, detail, remedy = self.webhook_source.health(now, self.webhook_stale)
+        except Exception as e:
+            return CheckResult("webhook", False,
+                               f"ошибка опроса webhook-буфера: {e}",
+                               "Проверь бота в консоли — исключение в webhook-источнике.")
+        return CheckResult("webhook", ok, detail, remedy)
 
     def _check_signal(self, now: float) -> CheckResult:
         if self.source is None:
@@ -252,10 +280,10 @@ class HealthMonitor:
 
     def _status_line(self) -> str:
         parts = []
-        for k in CHECK_ORDER:
+        for k in self.check_order:
             st = self._states[k].status or "?"
             parts.append(f"{k}={'OK' if st == 'ok' else st.upper()}")
-        return f"проверки {self._last_ok_count}/{len(CHECK_ORDER)}: " + " ".join(parts)
+        return f"проверки {self._last_ok_count}/{len(self.check_order)}: " + " ".join(parts)
 
     # ── Тик: собрать → оценить → отправить + суточная сводка ───────────────────
     def tick(self, now: Optional[float] = None) -> None:
@@ -310,9 +338,9 @@ class HealthMonitor:
 
     def _summary_text(self, now: float) -> str:
         signals, orders = self.metrics.take_daily()
-        total = len(CHECK_ORDER)
+        total = len(self.check_order)
         ok = self._last_ok_count
-        failing = [CHECK_TITLES[k] for k in CHECK_ORDER
+        failing = [self.titles[k] for k in self.check_order
                    if self._states[k].status == "fail"]
         line = (f"📊 Жив. Аптайм {_human_uptime(self.metrics.uptime_sec())}. "
                 f"Проверки {ok}/{total}. "

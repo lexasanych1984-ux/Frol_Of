@@ -58,6 +58,47 @@ class ReportCfg:
 
 
 @dataclass
+class WebhookCfg:
+    """Облачный store-and-forward буфер (Cloudflare Worker + D1) — резервный,
+    надёжный канал сигналов параллельно быстрому CDP. Бот его ОПРАШИВАЕТ (pull),
+    входящих портов на домашнем ПК не открывается.
+
+    Включён, только если заданы и pull_url, и token (см. .env WEBHOOK_*).
+    """
+    pull_url: str = ""                 # база, напр. https://<worker>.workers.dev
+    token: str = ""                    # длинный случайный секрет (в пути URL)
+    poll_interval_sec: int = 12        # как часто опрашивать буфер
+    pull_limit: int = 100              # сколько записей забирать за раз
+    stale_sec: int = 90                # нет успешного опроса дольше — авария (health)
+    request_timeout: float = 10.0      # таймаут HTTP-запроса к облаку
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.pull_url and self.token)
+
+
+@dataclass
+class FreshnessCfg:
+    """Защита протухших сигналов. Возраст = now − received_ts (когда сигнал
+    сработал/принят «наверху»). Применяется ко ВСЕМ источникам.
+
+    Вход старше entry_max_age исполнять нельзя (цена устарела) — пропускаем с
+    уведомлением. Управление позицией (БУ/выход) допустимо и позже: позиция уже
+    открыта. per_strategy — переопределение entry_max_age по стратегии (smc/crt/…).
+    """
+    entry_max_age_sec: int = 600           # 10 мин — вход
+    manage_max_age_sec: int = 21600        # 6 ч — БУ/выход
+    per_strategy: dict = field(default_factory=dict)
+
+    def entry_max_age(self, strategy: Optional[str]) -> int:
+        if strategy:
+            ov = self.per_strategy.get(strategy) or self.per_strategy.get(strategy.lower())
+            if isinstance(ov, dict) and ov.get("entry_max_age_sec") is not None:
+                return int(ov["entry_max_age_sec"])
+        return self.entry_max_age_sec
+
+
+@dataclass
 class Config:
     # env
     env: str                       # demo | live
@@ -74,6 +115,8 @@ class Config:
     telegram_prefix: str = "[BOT]"
     health: HealthCfg = field(default_factory=HealthCfg)
     report: ReportCfg = field(default_factory=ReportCfg)
+    webhook: WebhookCfg = field(default_factory=WebhookCfg)
+    freshness: FreshnessCfg = field(default_factory=FreshnessCfg)
     # yaml
     symbol_map: dict = field(default_factory=dict)
     risk: dict = field(default_factory=dict)
@@ -139,6 +182,22 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         daily_summary_at=(os.getenv("HEALTH_DAILY_SUMMARY_AT") or "09:00").strip(),
         pid_file=(os.getenv("HEALTH_PID_FILE") or "logs/bot.pid").strip(),
     )
+    webhook = WebhookCfg(
+        pull_url=(os.getenv("WEBHOOK_PULL_URL") or "").strip().rstrip("/"),
+        token=(os.getenv("WEBHOOK_TOKEN") or "").strip(),
+        poll_interval_sec=_int(os.getenv("WEBHOOK_POLL_SEC"), 12),
+        pull_limit=_int(os.getenv("WEBHOOK_PULL_LIMIT"), 100),
+        stale_sec=_int(os.getenv("WEBHOOK_STALE_SEC"), 90),
+    )
+    # Свежесть: дефолты из .env, per-strategy — из config.yaml (signal_freshness).
+    fresh_yaml = y.get("signal_freshness", {}) or {}
+    freshness = FreshnessCfg(
+        entry_max_age_sec=_int(os.getenv("WEBHOOK_ENTRY_MAX_AGE_SEC"),
+                               _int(fresh_yaml.get("entry_max_age_sec"), 600)),
+        manage_max_age_sec=_int(os.getenv("WEBHOOK_MANAGE_MAX_AGE_SEC"),
+                                _int(fresh_yaml.get("manage_max_age_sec"), 21600)),
+        per_strategy=fresh_yaml.get("per_strategy", {}) or {},
+    )
 
     return Config(
         env=os.getenv("BYBIT_ENV", "demo"),
@@ -154,6 +213,8 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         telegram_prefix=(os.getenv("TELEGRAM_PREFIX") or "[BOT]").strip(),
         health=health,
         report=report,
+        webhook=webhook,
+        freshness=freshness,
         symbol_map=y.get("symbol_map", {}) or {},
         risk=y.get("risk", {}) or {},
         guards=y.get("guards", {}) or {},
