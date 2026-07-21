@@ -1,0 +1,4 @@
+# runtime-артефакты сторожа — не в git
+state.json
+logs/
+etalons.bak.json
