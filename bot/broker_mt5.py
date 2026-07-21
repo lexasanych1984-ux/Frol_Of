@@ -31,6 +31,19 @@ class Account:
 
 
 @dataclass
+class Mt5Health:
+    """Снимок для мониторинга живости (см. bot/health.py).
+
+    Одним обращением снимаем всё, что нужно проверкам MT5, устойчиво к None.
+    """
+    initialized: bool                 # есть ли живая сессия со счётом
+    login: Optional[int]              # account_info().login
+    trade_allowed: Optional[bool]     # terminal_info().trade_allowed (кнопка алго)
+    trade_expert: Optional[bool]      # account_info().trade_expert (сервер)
+    error: str = ""
+
+
+@dataclass
 class Position:
     ticket: int
     symbol: str
@@ -122,6 +135,29 @@ class MT5Broker:
         """
         ti = self.mt5.terminal_info()
         return None if ti is None else bool(ti.trade_allowed)
+
+    def health_snapshot(self) -> Mt5Health:
+        """Единый снимок для мониторинга живости: связь со счётом, логин,
+        кнопка алго-торговли (терминал) и серверное разрешение советникам.
+
+        Никогда не бросает из-за None — возвращает то, что удалось снять, а
+        неизвестное оставляет None, чтобы health-модуль решил сам.
+        """
+        if self.mt5 is None:
+            return Mt5Health(False, None, None, None,
+                             "MT5 не инициализирован (connect не вызывался)")
+        ti = self.mt5.terminal_info()
+        trade_allowed = None if ti is None else bool(ti.trade_allowed)
+        ai = self.mt5.account_info()
+        if ai is None:
+            return Mt5Health(False, None, trade_allowed, None,
+                             f"нет связи со счётом: {self.mt5.last_error()}")
+        return Mt5Health(
+            initialized=True,
+            login=ai.login,
+            trade_allowed=trade_allowed,
+            trade_expert=bool(getattr(ai, "trade_expert", False)),
+        )
 
     def _wrong_account(self) -> Optional[str]:
         """Предполётная проверка перед каждой торговой операцией.

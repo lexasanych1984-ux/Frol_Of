@@ -60,6 +60,15 @@ class CdpSignalSource(SignalSource):
         self._seen_set: set[str] = set()
         self._msg_id = 0
         self._connected = False
+        # Для мониторинга живости: когда подключились и когда пришёл ЛЮБОЙ кадр.
+        # Молчащий поток (нет кадров N минут) = авария, даже если TCP жив.
+        self._connected_since = 0.0
+        self._last_frame_ts = 0.0
+        # Стартовая фора: подключение к CDP занимает секунды, а первая проверка
+        # живости идёт сразу на старте — без форы был бы ложный алерт «поток не
+        # подключён» на КАЖДОМ запуске.
+        self._started_at = 0.0
+        self._connect_grace = 45.0
 
     # ── Подключение к вкладке TradingView ─────────────────────────────────────
     def _find_target_ws(self) -> str:
@@ -130,6 +139,7 @@ class CdpSignalSource(SignalSource):
                 if ws is None:
                     ws = self._connect()
                     self._connected = True
+                    self._connected_since = time.time()
                     log.info("CDP подключён — слушаю срабатывания алертов "
                              "(pushstream канал pricealerts)")
                 raw = ws.recv()
@@ -158,6 +168,9 @@ class CdpSignalSource(SignalSource):
                 continue
             if msg.get("method") != "Network.webSocketFrameReceived":
                 continue
+            # Любой кадр = поток жив. Отметка нужна мониторингу живости:
+            # долгое молчание = зависший push, даже если сокет формально открыт.
+            self._last_frame_ts = time.time()
             payload = ((msg.get("params") or {}).get("response") or {}).get("payloadData")
             if isinstance(payload, str) and payload:
                 try:
@@ -224,8 +237,44 @@ class CdpSignalSource(SignalSource):
             log.info("За последние %d ч срабатываний алертов не было.", hours)
 
     def start(self) -> None:
+        self._started_at = time.time()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+
+    # ── Мониторинг живости ────────────────────────────────────────────────────
+    _REMEDY = ("Проверь, что TradingView Desktop запущен с портом отладки 9222 "
+               "и открыта вкладка с графиком/алертами (start-bot.ps1 поднимает "
+               "его сам). При зависании — перезапусти приложение.")
+
+    def health(self, now: float, stale_sec: float):
+        """(ok, причина, что делать) для проверки «поток сигналов».
+
+        Авария, если: соединение не установлено; ИЛИ подключились, но за
+        stale_sec не пришло НИ ОДНОГО кадра (завис push-поток).
+        """
+        if not self._connected:
+            # Только что стартовали — даём соединению установиться, не паникуем.
+            if self._started_at and (now - self._started_at) < self._connect_grace:
+                return (True, "CDP подключается…", "")
+            return (False,
+                    f"CDP-соединение с TradingView не установлено (порт {self.port})",
+                    self._REMEDY)
+        if self._last_frame_ts:
+            age = now - self._last_frame_ts
+            if age > stale_sec:
+                return (False,
+                        f"нет кадров от TradingView {int(age // 60)} мин — "
+                        f"push-поток завис (сокет открыт, но данных нет)",
+                        self._REMEDY)
+            return (True, f"CDP жив, последний кадр {int(age)} с назад", "")
+        # подключились, но кадров ещё не было — терпим не дольше stale_sec
+        age = now - self._connected_since
+        if age > stale_sec:
+            return (False,
+                    f"CDP подключён {int(age // 60)} мин, но не пришло ни одного "
+                    f"кадра — проверь вкладку TradingView",
+                    self._REMEDY)
+        return (True, "CDP подключён, ждём первые кадры", "")

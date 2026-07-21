@@ -72,10 +72,27 @@ def cmd_dryrun_samples(cfg, log):
 
 def cmd_trade(cfg, log):
     from bot.broker_mt5 import MT5Broker
+    from bot.health import (HealthMetrics, HealthMonitor, write_pid_file,
+                            remove_pid_file)
+    from bot.notify import TelegramNotifier
+
     if cfg.is_live and not cfg.dry_run:
         log.warning("⚠️⚠️ LIVE + ИСПОЛНЕНИЕ: бот будет торговать РЕАЛЬНЫМИ деньгами.")
+
+    notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id,
+                                cfg.telegram_prefix)
+    mode = ("LIVE РЕАЛЬНЫЕ ДЕНЬГИ" if cfg.is_live else "demo") + \
+           (" · DRY_RUN" if cfg.dry_run else " · исполнение")
+
+    # Не удалось даже подключиться к MT5 — это тоже авария, о которой раньше
+    # можно было узнать только по молчанию. Сообщаем сразу и падаем.
     broker = MT5Broker(cfg.mt5)
-    broker.connect()
+    try:
+        broker.connect()
+    except Exception as e:
+        notifier.send(f"⛔ Бот НЕ запустился: не удалось подключиться к MT5 — {e}. "
+                      f"Проверь, что терминал MT5 запущен и залогинен.")
+        raise
     acc = broker.account()
     log.info("Подключено: счёт %s equity=%.2f %s", acc.login, acc.equity, acc.currency)
 
@@ -88,7 +105,8 @@ def cmd_trade(cfg, log):
 
     state = State()
     state.prune()
-    engine = Engine(cfg, broker, state)
+    metrics = HealthMetrics()
+    engine = Engine(cfg, broker, state, metrics=metrics)
 
     if cfg.signal_source == "http":
         from bot.signals.http_source import HttpSignalSource
@@ -101,16 +119,35 @@ def cmd_trade(cfg, log):
         src.report_recent_fires()
 
     src.start()
-    log.info("Ожидание сигналов... (Ctrl+C для выхода)")
+
+    monitor = HealthMonitor(notifier, cfg, broker=broker, source=src,
+                            metrics=metrics)
+    pidf = write_pid_file(cfg)
+    log.info("pid-файл для внешнего watchdog: %s", pidf)
+    monitor.hello(mode, login=acc.login)
+    # Немедленная первая проверка: не ждать 5 минут, чтобы поймать уже
+    # существующую аварию (напр. алго-торговля выключена на старте).
+    monitor.start_first_check()
+
+    # Опрос с таймаутом (а не блокирующий stream): цикл регулярно просыпается и
+    # запускает проверки живости, даже когда сигналов нет. Короткий таймаут ещё
+    # и держит Ctrl+C отзывчивым на Windows.
+    poll_timeout = max(1.0, min(cfg.health.check_interval_sec, 5.0))
+    log.info("Ожидание сигналов... (Ctrl+C для выхода). Мониторинг живости включён.")
     try:
-        for raw in src.stream():
-            try:
-                engine.handle_raw(raw)
-            except Exception as e:  # один плохой сигнал не должен ронять бота
-                log.exception("Ошибка обработки сигнала: %s", e)
+        while True:
+            raw = src.poll(poll_timeout)
+            if raw is not None:
+                try:
+                    engine.handle_raw(raw)
+                except Exception as e:  # один плохой сигнал не должен ронять бота
+                    log.exception("Ошибка обработки сигнала: %s", e)
+            monitor.maybe_tick()
     except KeyboardInterrupt:
         log.info("Останов по Ctrl+C")
     finally:
+        monitor.goodbye()
+        remove_pid_file(cfg)
         src.stop()
         broker.shutdown()
         state.close()

@@ -14,12 +14,14 @@ log = logging.getLogger("bot")
 
 
 class Engine:
-    def __init__(self, cfg: Config, broker: MT5Broker, state: State):
+    def __init__(self, cfg: Config, broker: MT5Broker, state: State, metrics=None):
         self.cfg = cfg
         self.broker = broker
         self.state = state
         self.risk = RiskManager(cfg, state)
         self.exits = cfg.exits or {}
+        # Опциональные счётчики для суточной сводки мониторинга (bot/health.py).
+        self.metrics = metrics
 
     def handle_raw(self, raw_message: str) -> None:
         """Обработать одно сырое alert_message."""
@@ -28,6 +30,8 @@ class Engine:
             log.warning("Не распознан алерт: %r", raw_message[:200])
             return
         log.info("СИГНАЛ: %s", sig)
+        if self.metrics is not None:
+            self.metrics.on_signal()
 
         if self.risk.is_duplicate(sig):
             log.info("  ↳ дубликат, пропуск (%s)", sig.dedup_key())
@@ -92,6 +96,8 @@ class Engine:
         res = self.broker.place_entry(sig, decision.lots, decision.mt5_symbol)
         if res.ok:
             log.info("  ↳ ✅ ОРДЕР ОТПРАВЛЕН ticket=%s (%s)", res.ticket, res.detail)
+            if self.metrics is not None:
+                self.metrics.on_order()
         else:
             log.error("  ↳ ❌ ОШИБКА ОРДЕРА: %s", res.detail)
 

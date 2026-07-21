@@ -61,3 +61,12 @@ class HttpSignalSource(SignalSource):
     def stop(self) -> None:
         if self._srv:
             self._srv.shutdown()
+
+    def health(self, now: float, stale_sec: float):
+        """(ok, причина, что делать) — жив ли loopback-приёмник."""
+        alive = bool(self._srv and self._thread and self._thread.is_alive())
+        if alive:
+            return (True, f"http-приёмник слушает {self.host}:{self.port}", "")
+        return (False,
+                f"http-приёмник на {self.host}:{self.port} не поднят",
+                "Перезапусти бота — локальный приёмник сигналов не работает.")
