@@ -170,13 +170,20 @@ def cmd_trade(cfg, log):
                             metrics=metrics, webhook_source=webhook_src)
     # Живая тревога о серии стопов сверх исторического максимума (второе из двух
     # немедленных событий). Опрашивает историю MT5 раз в edge_check_interval_sec.
+    tv_names = {mt5sym: tv for tv, mt5sym in cfg.symbol_map.items()}
     edge = None
     if exp is not None:
         from bot.edgewatch import EdgeMonitor
-        tv_names = {mt5sym: tv for tv, mt5sym in cfg.symbol_map.items()}
         edge = EdgeMonitor(notifier, broker, cfg, exp, symbol_alias=tv_names)
         log.info("Edge-мониторинг серии стопов включён (каждые %d мин).",
                  cfg.report.edge_check_interval_sec // 60)
+
+    # Уведомление в Telegram о ЗАКРЫТИИ ботовой позиции (по SL/TP/сигналу) с P&L —
+    # следит за историей MT5, а не за exit-алертом (позиции чаще закрывает брокер).
+    from bot.closewatch import PositionCloseWatcher
+    closes = PositionCloseWatcher(notifier, broker, state, symbol_alias=tv_names)
+    log.info("Уведомления о закрытии сделок включены (опрос каждые %d с).",
+             closes.interval)
     pidf = write_pid_file(cfg)
     log.info("pid-файл для внешнего watchdog: %s", pidf)
     monitor.hello(mode, login=acc.login)
@@ -201,6 +208,7 @@ def cmd_trade(cfg, log):
             monitor.maybe_tick()
             if edge is not None:
                 edge.maybe_tick()
+            closes.maybe_tick()
     except KeyboardInterrupt:
         log.info("Останов по Ctrl+C")
     finally:

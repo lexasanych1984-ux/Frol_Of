@@ -102,15 +102,18 @@ def _engine(tmp_path, fill, notifier):
 def test_overshoot_triggers_alert(tmp_path):
     spy = _Notifier()
     _engine(tmp_path, fill=1.14115, notifier=spy).handle_raw(SHORT)
-    assert len(spy.sent) == 1
-    assert "РИСК ВЫШЕ ЗАДАННОГО" in spy.sent[0]
-    assert "EURUSD" in spy.sent[0]
+    # кроме обычного пуша о входе приходит отдельная тревога о риске
+    overshoot = [m for m in spy.sent if "РИСК ВЫШЕ ЗАДАННОГО" in m]
+    assert len(overshoot) == 1
+    assert "EURUSD" in overshoot[0]
 
 
 def test_clean_fill_does_not_alert(tmp_path):
     spy = _Notifier()
     _engine(tmp_path, fill=1.14222, notifier=spy).handle_raw(SHORT)
-    assert spy.sent == []
+    # уведомление о входе есть, а тревоги «риск выше заданного» — нет
+    assert any("ВХОД" in m for m in spy.sent)
+    assert not any("РИСК ВЫШЕ ЗАДАННОГО" in m for m in spy.sent)
 
 
 def test_execution_logged_with_risk_delta(tmp_path):

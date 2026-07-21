@@ -165,6 +165,7 @@ class Engine:
             log.info("  ↳ ✅ ОРДЕР ОТПРАВЛЕН ticket=%s (%s)", res.ticket, res.detail)
             if self.metrics is not None:
                 self.metrics.on_order()
+            self._notify_entry(sig, decision, account, res)
         else:
             log.error("  ↳ ❌ ОШИБКА ОРДЕРА: %s", res.detail)
             return
@@ -267,6 +268,42 @@ class Engine:
             except Exception as e:
                 log.warning("Не удалось отправить тревогу о риске: %s", e)
 
+    # ── Уведомления о сделках (Telegram) ────────────────────────────────────────
+    def _notify(self, msg: str) -> None:
+        """Отправить уведомление в Telegram (если notifier настроен). Никогда не
+        роняет движок: ошибка доставки лишь пишется в лог."""
+        if self.notifier is None:
+            return
+        try:
+            self.notifier.send(msg)
+        except Exception as e:
+            log.warning("Не удалось отправить уведомление о сделке: %s", e)
+
+    def _notify_entry(self, sig: Signal, decision: Decision, account,
+                      res: OrderResult) -> None:
+        """Сообщение об открытом ордере: сторона, символ, лот, уровни, риск.
+        Для рыночного ордера показываем фактическую цену исполнения (res.fill_price),
+        для отложенного — цену из алерта."""
+        s = decision.sizing
+        risk_pct = (s.risk_amount / account.equity * 100.0) if account.equity else 0.0
+        side_val = sig.side.value if sig.side else ""
+        emoji = {"long": "🟢", "short": "🔴"}.get(side_val, "📈")
+        fill = res.fill_price if (res and res.fill_price) else sig.entry
+        levels = f"вход {fill}"
+        if sig.sl:
+            levels += f" · SL {sig.sl}"
+        if sig.tp:
+            levels += f" · TP {sig.tp}"
+        tail = f"Риск {s.risk_amount:.0f} {account.currency} ({risk_pct:.2f}%)"
+        if sig.rr:
+            tail += f" · RR {sig.rr}"
+        if res and res.ticket:
+            tail += f" · ticket {res.ticket}"
+        self._notify(
+            f"{emoji} ВХОД {side_val.upper()} · {(sig.strategy or '?').upper()} · "
+            f"{sig.symbol_tv or decision.mt5_symbol}\n"
+            f"Лот {decision.lots} ({sig.order_kind.value}) · {levels}\n{tail}")
+
     # ── Безубыток ───────────────────────────────────────────────────────────────
     def _handle_breakeven(self, sig: Signal) -> None:
         if self.exits.get("on_breakeven", "move_sl_to_entry") != "move_sl_to_entry":
@@ -286,6 +323,9 @@ class Engine:
             return
         res = self.broker.modify_sl_to_entry(mt5_symbol, sig.side)
         log.info("  ↳ БУ %s: %s", "✅" if res.ok else "⚠️", res.detail)
+        if res.ok:
+            self._notify(f"🟡 БУ · стоп в безубыток · {(sig.strategy or '?').upper()} · "
+                         f"{sig.symbol_tv or mt5_symbol}")
 
     # ── Выход ─────────────────────────────────────────────────────────────────
     def _handle_exit(self, sig: Signal) -> None:
@@ -304,3 +344,6 @@ class Engine:
             return
         res = self.broker.close_position(mt5_symbol, sig.side)
         log.info("  ↳ закрытие %s: %s", "✅" if res.ok else "⚠️", res.detail)
+        if res.ok:
+            self._notify(f"⏹ ВЫХОД · закрытие позиции · {(sig.strategy or '?').upper()} · "
+                         f"{sig.symbol_tv or mt5_symbol}")
