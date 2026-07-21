@@ -6,6 +6,9 @@
   python run.py dryrun-samples   прогнать примеры алертов без MT5 (безопасно)
   python run.py trade            живой цикл (демо; DRY_RUN из .env)
   python run.py stats [дней]     статистика по стратегиям из истории MT5 + CSV
+  python run.py report [месяц]   факт демо ↔ коридор бэктеста (деградация эджа);
+                                 месяц: YYYY-MM | MM | last | (пусто = текущий);
+                                 добавь 'notify' — отправить сводку в Telegram
 """
 from __future__ import annotations
 
@@ -63,7 +66,10 @@ def cmd_dryrun_samples(cfg, log):
     state = State(":memory:")
     # уникальные ключи, чтобы дедуп не глотал разные примеры
     state.is_duplicate = lambda *a, **k: False  # type: ignore
-    engine = Engine(cfg, FakeBroker(equity=100000.0), state)
+    # отдельный лог, чтобы примеры НЕ засоряли боевой logs/executions.csv
+    dry_log = cfgmod.ROOT / "logs" / "dryrun-executions.csv"
+    engine = Engine(cfg, FakeBroker(equity=100000.0), state,
+                    exec_log_path=str(dry_log))
     log.info("Прогон %d примеров через парсер + сайзинг (equity=100000 USD, как на демо):", len(SAMPLES))
     for msg in SAMPLES:
         log.info("-" * 60)
@@ -106,7 +112,21 @@ def cmd_trade(cfg, log):
     state = State()
     state.prune()
     metrics = HealthMetrics()
-    engine = Engine(cfg, broker, state, metrics=metrics)
+    # Порог тревоги «риск выше заданного»: env RISK_OVERSHOOT_PP → expectations →
+    # дефолт. Коридоры нужны и движку (порог), и edge-монитору (серия стопов).
+    from bot import expectations as expmod
+    try:
+        exp = expmod.load(cfg.expectations_path())
+    except Exception as e:
+        log.warning("expectations.yaml не загружен (%s) — тревоги эджа по дефолтам", e)
+        exp = None
+    overshoot = cfg.report.risk_overshoot_pp
+    if overshoot is None:
+        overshoot = exp.risk_overshoot_pp if exp else 0.3
+    engine = Engine(cfg, broker, state, metrics=metrics, notifier=notifier,
+                    exec_log_path=cfg.exec_log_path(), risk_overshoot_pp=overshoot)
+    log.info("Лог проскальзывания: %s | тревога о риске при +%.2f п.п. сверх заданного",
+             cfg.exec_log_path(), overshoot)
 
     if cfg.signal_source == "http":
         from bot.signals.http_source import HttpSignalSource
@@ -122,6 +142,15 @@ def cmd_trade(cfg, log):
 
     monitor = HealthMonitor(notifier, cfg, broker=broker, source=src,
                             metrics=metrics)
+    # Живая тревога о серии стопов сверх исторического максимума (второе из двух
+    # немедленных событий). Опрашивает историю MT5 раз в edge_check_interval_sec.
+    edge = None
+    if exp is not None:
+        from bot.edgewatch import EdgeMonitor
+        tv_names = {mt5sym: tv for tv, mt5sym in cfg.symbol_map.items()}
+        edge = EdgeMonitor(notifier, broker, cfg, exp, symbol_alias=tv_names)
+        log.info("Edge-мониторинг серии стопов включён (каждые %d мин).",
+                 cfg.report.edge_check_interval_sec // 60)
     pidf = write_pid_file(cfg)
     log.info("pid-файл для внешнего watchdog: %s", pidf)
     monitor.hello(mode, login=acc.login)
@@ -143,6 +172,8 @@ def cmd_trade(cfg, log):
                 except Exception as e:  # один плохой сигнал не должен ронять бота
                     log.exception("Ошибка обработки сигнала: %s", e)
             monitor.maybe_tick()
+            if edge is not None:
+                edge.maybe_tick()
     except KeyboardInterrupt:
         log.info("Останов по Ctrl+C")
     finally:
@@ -178,7 +209,10 @@ def cmd_stats(cfg, log):
         acc = broker.account()
         start_balance = acc.balance - sum(t.profit for t in trades)
         csv_path = cfgmod.ROOT / "logs" / "trades.csv"
-        st.write_csv(trades, csv_path, start_balance=start_balance)
+        from bot import execlog
+        exec_index = execlog.index_by_position(cfg.exec_log_path())
+        st.write_csv(trades, csv_path, start_balance=start_balance,
+                     exec_index=exec_index)
         log.info("-" * 78)
         log.info("Полный список сделок: %s (открывается в Excel)", csv_path)
     opened = st.open_positions(broker.mt5)
@@ -190,6 +224,105 @@ def cmd_stats(cfg, log):
     else:
         log.info("Открытых позиций сейчас нет.")
     broker.shutdown()
+
+
+def _parse_report_args(argv):
+    """Из хвоста argv достать (year, month, notify). Токены: YYYY-MM | MM | last |
+    notify/tg/telegram. Пусто → текущий месяц, без отправки."""
+    from datetime import datetime
+    notify = False
+    year = month = None
+    for tok in argv:
+        t = tok.strip().lower()
+        if t in ("notify", "tg", "telegram", "--notify"):
+            notify = True
+        elif t in ("last", "прошлый", "prev"):
+            d = datetime.now().replace(day=1)
+            prev = (d.month - 2) % 12 + 1
+            yr = d.year - 1 if d.month == 1 else d.year
+            year, month = yr, prev
+        elif "-" in t:                       # YYYY-MM
+            try:
+                y, m = t.split("-")[:2]
+                year, month = int(y), int(m)
+            except ValueError:
+                pass
+        elif t.isdigit():                    # MM
+            month = int(t)
+    now = datetime.now()
+    if month is None:
+        year, month = now.year, now.month
+    if year is None:
+        year = now.year
+    return year, month, notify
+
+
+def cmd_report(cfg, log):
+    """Факт демо ↔ коридор бэктеста: пометки OK/ВНИМАНИЕ/ПРОБЛЕМА, слиппедж,
+    честность выборки. Пишет Markdown в logs/reports/, опц. сводку в Telegram."""
+    from datetime import datetime
+
+    from bot import execlog, expectations as expmod, report as rep, stats as st
+    from bot.broker_mt5 import MT5Broker
+    from bot.notify import TelegramNotifier
+
+    year, month, notify = _parse_report_args(sys.argv[2:])
+    month_label = f"{year:04d}-{month:02d}"
+
+    exp = expmod.load(cfg.expectations_path())
+    broker = MT5Broker(cfg.mt5)
+    broker.connect()
+    tv_names = {mt5sym: tv for tv, mt5sym in cfg.symbol_map.items()}
+    trades = st.collect_closed(broker.mt5, days=cfg.report.history_days,
+                               symbol_alias=tv_names)
+    acc = broker.account()
+    broker.shutdown()
+
+    exec_index = execlog.index_by_position(cfg.exec_log_path())
+    exec_rows = execlog.read(cfg.exec_log_path())
+    ref_equity = acc.balance or acc.equity
+
+    # По каждой стратегии из коридоров — накопительный факт демо vs коридор.
+    per_strategy = []
+    for key, se in exp.by_key.items():
+        label = se.label
+        label_trades = [t for t in trades if t.strategy == label]
+        per_strategy.append(rep.build_strategy_report(
+            label, label_trades, exec_index, se, exp.min_sample, ref_equity))
+
+    month_trades = [t for t in trades
+                    if t.close_time.year == year and t.close_time.month == month]
+    slip = rep.slippage_summary(exec_rows)      # накопительно (слиппедж системен)
+
+    now = datetime.now()
+    md = rep.render_markdown(month_label, per_strategy, slip, now,
+                             month_trades, exp.min_sample)
+    reports_dir = cfg.reports_dir_path()
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    out = reports_dir / f"report-{month_label}.md"
+    out.write_text(md, encoding="utf-8")
+
+    # Консольная выжимка
+    log.info("Отчёт эджа за %s (история %d дн., n=%d сделок демо):",
+             month_label, cfg.report.history_days, len(trades))
+    for r in per_strategy:
+        if r.n == 0:
+            log.info("  %-5s: нет сделок", r.label)
+            continue
+        tag = "⏳ мало данных" if not r.enough else r.worst_verdict()
+        wr = f"{r.win_rate*100:.0f}%" if r.win_rate is not None else "—"
+        pf = ("∞" if r.profit_factor == "∞"
+              else (f"{r.profit_factor:.2f}" if r.profit_factor is not None else "—"))
+        log.info("  %-5s: n=%-3d WR=%-4s PF=%-5s net=%-8.0f W/BE/L=%d/%d/%d  [%s]",
+                 r.label, r.n, wr, pf, r.net, r.wins, r.be, r.stops, tag)
+    log.info("Markdown-отчёт: %s", out)
+
+    if notify:
+        notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id,
+                                    cfg.telegram_prefix)
+        text = rep.render_telegram(month_label, per_strategy, slip, exp.min_sample)
+        ok = notifier.send(text)
+        log.info("Telegram-сводка: %s", "отправлена" if ok else "НЕ отправлена")
 
 
 def main():
@@ -207,8 +340,11 @@ def main():
         cmd_trade(cfg, log)
     elif cmd == "stats":
         cmd_stats(cfg, log)
+    elif cmd == "report":
+        cmd_report(cfg, log)
     else:
-        log.error("Неизвестная команда %r. Доступно: check | dryrun-samples | trade | stats", cmd)
+        log.error("Неизвестная команда %r. Доступно: check | dryrun-samples | "
+                  "trade | stats | report", cmd)
         sys.exit(2)
 
 

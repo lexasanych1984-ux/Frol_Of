@@ -43,6 +43,21 @@ class HealthCfg:
 
 
 @dataclass
+class ReportCfg:
+    """Отчёт факт↔коридор + мгновенные тревоги о деградации эджа."""
+    expectations_file: str = "expectations.yaml"   # коридоры бэктеста
+    exec_log: str = "logs/executions.csv"          # append-only лог проскальзывания
+    reports_dir: str = "logs/reports"              # markdown-отчёты
+    history_days: int = 400                        # глубина истории MT5 для отчёта
+    # Мгновенная тревога: факт.риск сделки выше заданного больше чем на столько
+    # проц. пунктов. None → берётся из expectations.yaml (meta.risk_overshoot_pp);
+    # env RISK_OVERSHOOT_PP имеет приоритет над обоими.
+    risk_overshoot_pp: Optional[float] = None
+    # Как часто опрашивать историю MT5 на предмет серии стопов (сек).
+    edge_check_interval_sec: int = 900
+
+
+@dataclass
 class Config:
     # env
     env: str                       # demo | live
@@ -58,6 +73,7 @@ class Config:
     telegram_chat_id: str = ""
     telegram_prefix: str = "[BOT]"
     health: HealthCfg = field(default_factory=HealthCfg)
+    report: ReportCfg = field(default_factory=ReportCfg)
     # yaml
     symbol_map: dict = field(default_factory=dict)
     risk: dict = field(default_factory=dict)
@@ -74,6 +90,19 @@ class Config:
         if not tv_ticker:
             return None
         return self.symbol_map.get(tv_ticker) or self.symbol_map.get(tv_ticker.upper())
+
+    def _abs(self, rel: str) -> Path:
+        p = Path(rel)
+        return p if p.is_absolute() else (ROOT / p)
+
+    def exec_log_path(self) -> Path:
+        return self._abs(self.report.exec_log)
+
+    def reports_dir_path(self) -> Path:
+        return self._abs(self.report.reports_dir)
+
+    def expectations_path(self) -> Path:
+        return self._abs(self.report.expectations_file)
 
 
 def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Config:
@@ -94,6 +123,15 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         y = yaml.safe_load(f) or {}
 
     tg_token, tg_chat = _resolve_telegram()
+    overshoot_raw = (os.getenv("RISK_OVERSHOOT_PP") or "").strip()
+    report = ReportCfg(
+        expectations_file=(os.getenv("EXPECTATIONS_FILE") or "expectations.yaml").strip(),
+        exec_log=(os.getenv("EXEC_LOG_FILE") or "logs/executions.csv").strip(),
+        reports_dir=(os.getenv("REPORTS_DIR") or "logs/reports").strip(),
+        history_days=_int(os.getenv("REPORT_HISTORY_DAYS"), 400),
+        risk_overshoot_pp=(float(overshoot_raw) if overshoot_raw else None),
+        edge_check_interval_sec=_int(os.getenv("EDGE_CHECK_INTERVAL_SEC"), 900),
+    )
     health = HealthCfg(
         check_interval_sec=_int(os.getenv("HEALTH_CHECK_INTERVAL_SEC"), 300),
         cdp_stale_sec=_int(os.getenv("HEALTH_CDP_STALE_SEC"), 600),
@@ -115,6 +153,7 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         telegram_chat_id=tg_chat,
         telegram_prefix=(os.getenv("TELEGRAM_PREFIX") or "[BOT]").strip(),
         health=health,
+        report=report,
         symbol_map=y.get("symbol_map", {}) or {},
         risk=y.get("risk", {}) or {},
         guards=y.get("guards", {}) or {},

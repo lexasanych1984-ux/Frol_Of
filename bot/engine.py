@@ -2,19 +2,25 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from typing import Optional
 
-from .broker_mt5 import MT5Broker
+from . import execlog, slippage
+from .broker_mt5 import MT5Broker, OrderResult
 from .config import Config
-from .model import Action, OrderKind, Signal
+from .model import Action, OrderKind, Side, Signal
 from .parser import parse
-from .risk import RiskManager
+from .risk import Decision, RiskManager
+from .sizing import SymbolSpec
 from .state import State
 
 log = logging.getLogger("bot")
 
 
 class Engine:
-    def __init__(self, cfg: Config, broker: MT5Broker, state: State, metrics=None):
+    def __init__(self, cfg: Config, broker: MT5Broker, state: State, metrics=None,
+                 notifier=None, exec_log_path=None,
+                 risk_overshoot_pp: Optional[float] = None):
         self.cfg = cfg
         self.broker = broker
         self.state = state
@@ -22,6 +28,13 @@ class Engine:
         self.exits = cfg.exits or {}
         # Опциональные счётчики для суточной сводки мониторинга (bot/health.py).
         self.metrics = metrics
+        # Мгновенные тревоги (риск выше заданного) — тот же Telegram, что у health.
+        self.notifier = notifier
+        # Append-only лог проскальзывания: план (алерт) ↔ факт (исполнение).
+        self.exec_log_path = exec_log_path or cfg.exec_log_path()
+        # Порог тревоги «риск выше заданного» в проц. пунктах.
+        self.risk_overshoot_pp = (risk_overshoot_pp
+                                  if risk_overshoot_pp is not None else 0.3)
 
     def handle_raw(self, raw_message: str) -> None:
         """Обработать одно сырое alert_message."""
@@ -91,6 +104,9 @@ class Engine:
 
         if self.cfg.dry_run:
             log.info("  ↳ [DRY_RUN] ордер НЕ отправлен")
+            # План всё равно фиксируем (факт — оценочный, dry_run=1).
+            self._record_execution(sig, decision, spec, account, market_price,
+                                   res=None, dry=True)
             return
 
         res = self.broker.place_entry(sig, decision.lots, decision.mt5_symbol)
@@ -100,6 +116,105 @@ class Engine:
                 self.metrics.on_order()
         else:
             log.error("  ↳ ❌ ОШИБКА ОРДЕРА: %s", res.detail)
+            return
+
+        # Систематическая запись плана↔факта + мгновенная тревога, если реальный
+        # риск исполнения ушёл выше заданного (рынок сместился до отправки/фила).
+        self._record_execution(sig, decision, spec, account, market_price, res=res)
+
+    # ── Лог проскальзывания (план ↔ факт) ──────────────────────────────────────
+    def _record_execution(self, sig: Signal, decision: Decision, spec: SymbolSpec,
+                           account, market_price: Optional[float],
+                           res: Optional[OrderResult], dry: bool = False) -> None:
+        """Собрать запись плана↔факта, дописать в лог и проверить риск.
+
+        Для рыночного ордера факт (цена/объём) известен сразу; для limit/stop он
+        появится при срабатывании — тогда факт остаётся пустым и досчитывается
+        отчётом из истории MT5 по position_id.
+        """
+        target = float(self.cfg.risk.get("risk_pct_per_trade", 1.0))
+        equity = account.equity
+        plan_risk_amount = round(equity * target / 100.0, 2)
+        is_market = sig.order_kind is OrderKind.MARKET
+
+        # Факт исполнения
+        fill_price = fill_lots = None
+        ticket = position_id = None
+        if res is not None:
+            ticket, position_id = res.ticket, res.position_id
+            fill_lots = res.fill_volume or decision.lots
+            if is_market:
+                fill_price = res.fill_price or market_price or sig.entry
+        elif dry and is_market:
+            # dry-run: лучшая оценка исполнения — текущая цена (или цена алерта)
+            fill_price = market_price or sig.entry
+            fill_lots = decision.lots
+
+        slip = slippage.compute_slippage(
+            sig.side.value if sig.side else "", sig.entry, fill_price, sig.sl, spec)
+        actual = None
+        if fill_price is not None and fill_lots:
+            actual = slippage.compute_actual_risk(
+                fill_price, sig.sl, sig.tp, fill_lots, spec, equity)
+
+        risk_delta = (round(actual.risk_pct - target, 3)
+                      if actual is not None else None)
+        rec = execlog.ExecutionRecord(
+            ts=datetime.now().isoformat(timespec="seconds"),
+            strategy=(sig.strategy or ""),
+            symbol_tv=(sig.symbol_tv or ""),
+            mt5_symbol=decision.mt5_symbol or spec.name,
+            side=sig.side.value if sig.side else "",
+            order_kind=sig.order_kind.value,
+            ticket=ticket, position_id=position_id,
+            plan_entry=sig.entry, sl=sig.sl, tp=sig.tp, plan_rr=sig.rr,
+            target_risk_pct=target, plan_lots=decision.lots,
+            plan_risk_amount=plan_risk_amount,
+            fill_price=fill_price, fill_lots=fill_lots,
+            actual_rr=(actual.rr if actual else None),
+            actual_risk_pct=(actual.risk_pct if actual else None),
+            actual_risk_amount=(actual.risk_amount if actual else None),
+            slip_price=(slip.slip_price if slip else None),
+            slip_pips=(slip.slip_pips if slip else None),
+            slip_pct_of_sl=(slip.slip_pct_of_sl if slip else None),
+            risk_delta_pp=risk_delta,
+            adverse=(1 if (slip and slip.adverse) else 0),
+            equity=round(equity, 2),
+            dry_run=1 if dry else 0,
+        )
+        try:
+            execlog.append(self.exec_log_path, rec)
+        except Exception as e:  # лог проскальзывания не должен ронять исполнение
+            log.warning("Не удалось записать лог проскальзывания: %s", e)
+
+        if slip is not None and slip.slip_pct_of_sl is not None:
+            log.info("  ↳ проскальзывание: %s п (%.1f%% дистанции до SL) | "
+                     "риск факт %.2f%% (цель %.2f%%)",
+                     slip.slip_pips, slip.slip_pct_of_sl,
+                     actual.risk_pct if actual else float("nan"), target)
+
+        # Мгновенная тревога — только на реальном исполнении (не dry-run).
+        if not dry and risk_delta is not None and risk_delta > self.risk_overshoot_pp:
+            self._alert_risk_overshoot(sig, decision, target, actual, slip)
+
+    def _alert_risk_overshoot(self, sig, decision, target, actual, slip) -> None:
+        slip_txt = ""
+        if slip is not None:
+            slip_txt = (f" Проскальзывание {slip.slip_pips} п "
+                        f"(алерт {sig.entry} → факт).")
+        msg = (f"⚠️ РИСК ВЫШЕ ЗАДАННОГО · {(sig.strategy or '?').upper()} "
+               f"{(sig.side.value if sig.side else '')} {sig.symbol_tv}\n"
+               f"Факт {actual.risk_pct:.2f}% vs цель {target:.2f}% "
+               f"(+{actual.risk_pct - target:.2f} п.п., порог "
+               f"{self.risk_overshoot_pp} п.п.).{slip_txt}\n"
+               f"Лот {decision.lots}, риск {actual.risk_amount:.0f} "
+               f"вместо {decision.sizing.risk_amount:.0f}.")
+        log.warning("  ↳ %s", " | ".join(p.strip() for p in msg.splitlines()))
+        if self.notifier is not None:
+            try:
+                self.notifier.send(msg)
+            except Exception as e:
+                log.warning("Не удалось отправить тревогу о риске: %s", e)
 
     # ── Безубыток ───────────────────────────────────────────────────────────────
     def _handle_breakeven(self, sig: Signal) -> None:

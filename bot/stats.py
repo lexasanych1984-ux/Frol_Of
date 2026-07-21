@@ -126,16 +126,25 @@ def summarize(trades: List[ClosedTrade]) -> List[dict]:
 
 
 def write_csv(trades: List[ClosedTrade], path: Path,
-              start_balance: Optional[float] = None) -> None:
+              start_balance: Optional[float] = None,
+              exec_index: Optional[dict] = None) -> None:
     """trades должны быть отсортированы по close_time (collect_closed так и отдаёт).
     Если задан start_balance — добавляется колонка Equity (нарастающий баланс),
-    по ней строится график доходности (в т.ч. в Notion)."""
+    по ней строится график доходности (в т.ч. в Notion).
+
+    exec_index (position_id → строка лога проскальзывания, bot/execlog) добавляет
+    хвостовые колонки ПЛАН↔ФАКТ: цена алерта, слиппедж в пунктах, заданный и
+    фактический риск, дельта риска, RR план/факт. Где записи нет — пусто."""
+    ei = exec_index or {}
+    slip_cols = ["план вход", "факт вход", "slip (пункты)", "риск цель %",
+                 "риск факт %", "Δриск п.п.", "RR план", "RR факт"]
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f, delimiter=";")
         w.writerow(["закрыта", "стратегия", "символ", "сторона", "лот",
                     "открыта", "цена входа", "цена выхода", "P&L (USD)",
-                    "Equity (USD)", "кумул P&L стратегии (USD)", "позиция ID"])
+                    "Equity (USD)", "кумул P&L стратегии (USD)", "позиция ID"]
+                   + slip_cols)
         equity = start_balance
         cum_by_strategy: dict[str, float] = {}
         for t in trades:
@@ -143,11 +152,17 @@ def write_csv(trades: List[ClosedTrade], path: Path,
                 equity = round(equity + t.profit, 2)
             cum = round(cum_by_strategy.get(t.strategy, 0.0) + t.profit, 2)
             cum_by_strategy[t.strategy] = cum
+            r = ei.get(t.position_id, {})
+            slip = [r.get("plan_entry", ""), r.get("fill_price", ""),
+                    r.get("slip_pips", ""), r.get("target_risk_pct", ""),
+                    r.get("actual_risk_pct", ""), r.get("risk_delta_pp", ""),
+                    r.get("plan_rr", ""), r.get("actual_rr", "")]
             w.writerow([t.close_time.strftime("%Y-%m-%d %H:%M"), t.strategy,
                         t.symbol, t.side, t.volume,
                         t.open_time.strftime("%Y-%m-%d %H:%M"),
                         t.price_open, t.price_close, t.profit,
-                        equity if equity is not None else "", cum, t.position_id])
+                        equity if equity is not None else "", cum, t.position_id]
+                       + slip)
 
 
 def open_positions(mt5) -> List[dict]:

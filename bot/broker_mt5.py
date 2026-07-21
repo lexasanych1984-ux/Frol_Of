@@ -60,6 +60,12 @@ class OrderResult:
     detail: str
     ticket: Optional[int] = None
     raw: object = None
+    # Факт исполнения (для лога проскальзывания). Для рыночного ордера MT5
+    # возвращает реальные цену и объём; для отложенного — заполнится при
+    # срабатывании (из истории MT5), здесь остаётся None.
+    fill_price: Optional[float] = None
+    fill_volume: Optional[float] = None
+    position_id: Optional[int] = None
 
 
 class MT5Broker:
@@ -240,8 +246,17 @@ class MT5Broker:
         if res is None:
             return OrderResult(False, f"order_send=None {mt5.last_error()}", raw=req)
         ok = res.retcode == mt5.TRADE_RETCODE_DONE
+        # Реальная цена/объём исполнения: у рыночного ордера MT5 кладёт их в
+        # результат (res.price/res.volume). У отложенного они появятся при
+        # срабатывании — тогда fill_price=0/None, и лог возьмёт плановую цену.
+        fill_price = getattr(res, "price", None) or None
+        fill_volume = getattr(res, "volume", None) or None
+        # id позиции = тикет открывающего ордера (в MT5 они совпадают).
+        position_id = getattr(res, "order", None) or None
         return OrderResult(ok, f"retcode={res.retcode} {res.comment}",
-                           ticket=getattr(res, "order", None), raw=res)
+                           ticket=getattr(res, "order", None), raw=res,
+                           fill_price=fill_price, fill_volume=fill_volume,
+                           position_id=position_id)
 
     def modify_sl_to_entry(self, symbol: str, side: Optional[Side] = None) -> OrderResult:
         """Перенести стоп в безубыток (к цене открытия) для позиции по символу.
