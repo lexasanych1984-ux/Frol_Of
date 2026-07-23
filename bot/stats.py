@@ -125,6 +125,24 @@ def summarize(trades: List[ClosedTrade]) -> List[dict]:
     return rows
 
 
+def equity_curve(trades: List[ClosedTrade],
+                 start_balance: Optional[float] = None):
+    """Для каждой сделки (в порядке close_time) вернуть (trade, equity, cum).
+
+    equity — нарастающий баланс счёта после закрытия сделки (None, если
+    start_balance не задан); cum — накопленный P&L внутри стратегии этой сделки.
+    Один источник правды для CSV-колонок и синхронизации в Notion, чтобы кривая
+    доходности в отчёте и в базе считалась байт-в-байт одинаково."""
+    equity = start_balance
+    cum_by_strategy: dict[str, float] = {}
+    for t in trades:
+        if equity is not None:
+            equity = round(equity + t.profit, 2)
+        cum = round(cum_by_strategy.get(t.strategy, 0.0) + t.profit, 2)
+        cum_by_strategy[t.strategy] = cum
+        yield t, equity, cum
+
+
 def write_csv(trades: List[ClosedTrade], path: Path,
               start_balance: Optional[float] = None,
               exec_index: Optional[dict] = None) -> None:
@@ -145,13 +163,7 @@ def write_csv(trades: List[ClosedTrade], path: Path,
                     "открыта", "цена входа", "цена выхода", "P&L (USD)",
                     "Equity (USD)", "кумул P&L стратегии (USD)", "позиция ID"]
                    + slip_cols)
-        equity = start_balance
-        cum_by_strategy: dict[str, float] = {}
-        for t in trades:
-            if equity is not None:
-                equity = round(equity + t.profit, 2)
-            cum = round(cum_by_strategy.get(t.strategy, 0.0) + t.profit, 2)
-            cum_by_strategy[t.strategy] = cum
+        for t, equity, cum in equity_curve(trades, start_balance):
             r = ei.get(t.position_id, {})
             slip = [r.get("plan_entry", ""), r.get("fill_price", ""),
                     r.get("slip_pips", ""), r.get("target_risk_pct", ""),

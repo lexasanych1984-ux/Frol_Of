@@ -78,6 +78,36 @@ class WebhookCfg:
 
 
 @dataclass
+class NotionCfg:
+    """Автосинхронизация закрытых сделок в Notion-базу «Сделки бота».
+
+    Бот сам пишет каждую закрытую сделку строкой в базу (идемпотентно по
+    position_id), чтобы дашборд доходности не пустел молча. Включён, только если
+    задан NOTION_TOKEN (секрет internal-интеграции Notion); database_id по
+    умолчанию указывает на существующую базу.
+
+    Токен нельзя переиспользовать из Telegram — нужна отдельная internal-
+    интеграция Notion, которой расшарена страница «Торговый бот — статистика».
+    """
+    token: str = ""                    # secret internal-интеграции Notion
+    database_id: str = ""              # id базы «Сделки бота»
+    charts_page_id: str = ""          # страница для PNG-графиков (пусто → без графиков)
+    sync_interval_sec: int = 60        # как часто досинхронизировать (сек)
+    history_days: int = 7              # глубина истории MT5 для добора простоя
+    request_timeout: float = 15.0      # таймаут HTTP-запроса к Notion
+    charts_timeout: float = 30.0       # таймаут заливки картинок (крупнее)
+    alert_after_fails: int = 3         # столько подряд провалов → тревога в Telegram
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.token and self.database_id)
+
+    @property
+    def charts_enabled(self) -> bool:
+        return bool(self.token and self.charts_page_id)
+
+
+@dataclass
 class FreshnessCfg:
     """Защита протухших сигналов. Возраст = now − received_ts (когда сигнал
     сработал/принят «наверху»). Применяется ко ВСЕМ источникам.
@@ -116,6 +146,7 @@ class Config:
     health: HealthCfg = field(default_factory=HealthCfg)
     report: ReportCfg = field(default_factory=ReportCfg)
     webhook: WebhookCfg = field(default_factory=WebhookCfg)
+    notion: NotionCfg = field(default_factory=NotionCfg)
     freshness: FreshnessCfg = field(default_factory=FreshnessCfg)
     # yaml
     symbol_map: dict = field(default_factory=dict)
@@ -189,6 +220,15 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         pull_limit=_int(os.getenv("WEBHOOK_PULL_LIMIT"), 100),
         stale_sec=_int(os.getenv("WEBHOOK_STALE_SEC"), 90),
     )
+    notion = NotionCfg(
+        token=(os.getenv("NOTION_TOKEN") or "").strip(),
+        # id базы «Сделки бота»; при желании переопределяется NOTION_DB_ID
+        database_id=(os.getenv("NOTION_DB_ID")
+                     or "ef22e9a2100f4803beff954a7aedd0e2").strip(),
+        charts_page_id=(os.getenv("NOTION_CHARTS_PAGE_ID") or "").strip(),
+        sync_interval_sec=_int(os.getenv("NOTION_SYNC_SEC"), 60),
+        history_days=_int(os.getenv("NOTION_HISTORY_DAYS"), 7),
+    )
     # Свежесть: дефолты из .env, per-strategy — из config.yaml (signal_freshness).
     fresh_yaml = y.get("signal_freshness", {}) or {}
     freshness = FreshnessCfg(
@@ -214,6 +254,7 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         health=health,
         report=report,
         webhook=webhook,
+        notion=notion,
         freshness=freshness,
         symbol_map=y.get("symbol_map", {}) or {},
         risk=y.get("risk", {}) or {},

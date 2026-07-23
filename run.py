@@ -9,6 +9,9 @@
   python run.py report [месяц]   факт демо ↔ коридор бэктеста (деградация эджа);
                                  месяц: YYYY-MM | MM | last | (пусто = текущий);
                                  добавь 'notify' — отправить сводку в Telegram
+  python run.py sync-notion      разово досинхронизировать закрытые сделки в
+                                 Notion-базу «Сделки бота» (идемпотентно; тот же
+                                 проход, что крутится в 'trade')
   python run.py webhook-selftest проверить цепочку облачного буфера (POST /hook →
                                  GET /pull round-trip), MT5 НЕ трогает
 """
@@ -184,6 +187,32 @@ def cmd_trade(cfg, log):
     closes = PositionCloseWatcher(notifier, broker, state, symbol_alias=tv_names)
     log.info("Уведомления о закрытии сделок включены (опрос каждые %d с).",
              closes.interval)
+
+    # Автосинхронизация закрытых сделок в Notion-базу «Сделки бота»: пишем каждую
+    # закрытую сделку строкой (идемпотентно по position_id), чтобы дашборд
+    # доходности не пустел молча. Без NOTION_TOKEN — выключено (и говорит об этом).
+    notion = None
+    if cfg.notion.enabled:
+        from bot.notion_sync import NotionJournal, NotionSyncWatcher
+        journal = NotionJournal(cfg.notion.token, cfg.notion.database_id,
+                                timeout=cfg.notion.request_timeout)
+        charts = None
+        if cfg.notion.charts_enabled:
+            from bot.notion_charts import NotionCharts
+            charts = NotionCharts(cfg.notion.token, cfg.notion.charts_page_id,
+                                  timeout=cfg.notion.charts_timeout)
+        notion = NotionSyncWatcher(journal, broker, notifier=notifier,
+                                   symbol_alias=tv_names,
+                                   interval_sec=cfg.notion.sync_interval_sec,
+                                   history_days=cfg.notion.history_days,
+                                   alert_after_fails=cfg.notion.alert_after_fails,
+                                   charts=charts)
+        log.info("Автосинк журнала Notion включён (каждые %d с, база %s)%s.",
+                 notion.interval, cfg.notion.database_id,
+                 " + PNG-графики" if charts else "")
+    else:
+        log.info("Автосинк Notion ВЫКЛЮЧЕН (задай NOTION_TOKEN в .env — иначе "
+                 "журнал сделок в Notion не наполняется).")
     pidf = write_pid_file(cfg)
     log.info("pid-файл для внешнего watchdog: %s", pidf)
     monitor.hello(mode, login=acc.login)
@@ -209,6 +238,8 @@ def cmd_trade(cfg, log):
             if edge is not None:
                 edge.maybe_tick()
             closes.maybe_tick()
+            if notion is not None:
+                notion.maybe_tick()
     except KeyboardInterrupt:
         log.info("Останов по Ctrl+C")
     finally:
@@ -360,6 +391,52 @@ def cmd_report(cfg, log):
         log.info("Telegram-сводка: %s", "отправлена" if ok else "НЕ отправлена")
 
 
+def cmd_sync_notion(cfg, log):
+    """Разовый проход автосинка: досоздать в Notion недостающие закрытые сделки.
+
+    Тот же код, что крутится в 'trade' (NotionSyncWatcher.tick), но один раз —
+    удобно для бэкфилла и проверки доступа интеграции без запуска торгового цикла.
+    """
+    from bot.broker_mt5 import MT5Broker
+    from bot.notify import TelegramNotifier
+    from bot.notion_sync import NotionJournal, NotionSyncWatcher
+
+    if not cfg.notion.enabled:
+        log.error("Автосинк Notion не настроен: задай NOTION_TOKEN (секрет "
+                  "internal-интеграции Notion) в .env. database_id=%s",
+                  cfg.notion.database_id)
+        sys.exit(2)
+
+    notifier = TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id,
+                                cfg.telegram_prefix)
+    broker = MT5Broker(cfg.mt5)
+    broker.connect()
+    tv_names = {mt5sym: tv for tv, mt5sym in cfg.symbol_map.items()}
+    journal = NotionJournal(cfg.notion.token, cfg.notion.database_id,
+                            timeout=cfg.notion.request_timeout)
+    charts = None
+    if cfg.notion.charts_enabled:
+        from bot.notion_charts import NotionCharts
+        charts = NotionCharts(cfg.notion.token, cfg.notion.charts_page_id,
+                              timeout=cfg.notion.charts_timeout)
+    watcher = NotionSyncWatcher(journal, broker, notifier=notifier,
+                                symbol_alias=tv_names,
+                                history_days=cfg.notion.history_days,
+                                alert_after_fails=cfg.notion.alert_after_fails,
+                                charts=charts)
+    log.info("Синхронизация закрытых сделок в Notion (база %s, история %d дн.)%s...",
+             cfg.notion.database_id, cfg.notion.history_days,
+             " + графики" if charts else "")
+    written = watcher.tick()
+    broker.shutdown()
+    if watcher._alerted:
+        log.error("Синхронизация ПРОВАЛЕНА — см. предупреждение выше и тревогу в "
+                  "Telegram.")
+        sys.exit(1)
+    log.info("Готово: записано новых строк — %d (существующие пропущены как дубли).",
+             written)
+
+
 def cmd_webhook_selftest(cfg, log):
     """Round-trip облачного буфера: POST тестового тела в /hook → GET /pull.
 
@@ -442,11 +519,13 @@ def main():
         cmd_stats(cfg, log)
     elif cmd == "report":
         cmd_report(cfg, log)
+    elif cmd == "sync-notion":
+        cmd_sync_notion(cfg, log)
     elif cmd == "webhook-selftest":
         cmd_webhook_selftest(cfg, log)
     else:
         log.error("Неизвестная команда %r. Доступно: check | dryrun-samples | "
-                  "trade | stats | report | webhook-selftest", cmd)
+                  "trade | stats | report | sync-notion | webhook-selftest", cmd)
         sys.exit(2)
 
 
