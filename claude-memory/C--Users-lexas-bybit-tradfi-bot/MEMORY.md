@@ -9,3 +9,4 @@
 - [Notion journal](notion-journal.md) — база «Сделки бота» + автосинк из бота (bot/notion_sync.py); раньше молча пустела. Нужен NOTION_TOKEN в .env.
 - [Runtime facts](runtime-facts.md) — демо-счёт 245169 Just2Trade-MT5, DRY_RUN=false, источник cdp.
 - [CRT invalidation & cancel](crt-invalidation-cancel.md) — CRT-отложка без фильтра свежести; инвалидация (закол/конец дня) → сигнал ОТМЕНА + MT5-экспирация. Нужен ручной пересоздать алерт.
+- [Projects backup system](projects-backup-system.md) — единый git-бэкап всех проектов в Frol_Of ветка projects-backup; backup.ps1 + Планировщик (вс→пн 03:30); секрет-скан, .env→.env.example.
