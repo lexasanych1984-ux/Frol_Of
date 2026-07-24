@@ -1,0 +1,24 @@
+# --- MT5 ---
+MetaTrader5>=5.0.45  # только Windows, нужен запущенный терминал (live-экспорт + бэктест OHLC)
+
+# --- Notion ---
+# Работаем через сырой REST API (см. src/notion_sync/client.py) вместо
+# notion-client SDK — так проще контролировать заголовок Notion-Version
+# и явно работать с data source id для мульти-сорсных баз.
+requests>=2.31.0
+
+# --- Claude API ---
+anthropic>=0.34.0
+
+# --- Telegram bot ---
+python-telegram-bot>=21.0
+
+# --- Конфиг / утилиты ---
+python-dotenv>=1.0.1
+PyYAML>=6.0.1
+pandas>=2.2.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# --- Тесты ---
+pytest>=8.0.0

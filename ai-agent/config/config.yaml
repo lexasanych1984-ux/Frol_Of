@@ -1,0 +1,84 @@
+# Риск-лимиты FundingPips "2 Step Standard" — сняты с официальной страницы
+# help.fundingpips.com/hc/en-us/articles/34501809112081-2-Step-Standard (июль 2026):
+#
+#   Max Loss Limit: 10% от стартового размера счёта. СТАТИЧНЫЙ — не двигается,
+#     действует на всех фазах, включая плавающий убыток по открытым позициям.
+#   Daily Loss Limit: 5% от БОЛЬШЕГО из (баланс на начало дня / equity на начало дня),
+#     а не просто от баланса. Сбрасывается в 00:00 Platform Time (UTC+3!) —
+#     не в локальную полночь. Плавающий P&L тоже считается.
+#   Нарушение фиксируется в момент касания лимита — даже если счёт потом
+#     отыгрался обратно в плюс, брич уже произошёл.
+#   Profit target: Phase 1 — 8% или 10% (на выбор при покупке), Phase 2 — 5%.
+#
+# ВАЖНО (TODO для risk/limits.py): текущий daily_pnl() считает по close_time
+# закрытых сделок и локальной дате — это не учитывает (а) сдвиг суток на
+# UTC+3, (б) плавающий убыток по ещё открытым позициям. Для честной проверки
+# daily loss в реальном времени этого недостаточно, нужно тянуть live equity
+# из терминала (см. mt5_import/live_export.py, ещё не реализовано).
+
+accounts:
+  - name: "FundingPips 11620556"
+    mt5_login: "11620556"
+    notion_account_name: "FP_10"           # по исключению: депозит 10000, единственный из двух 10k-счетов, не подтверждённый как FP_10_f
+    challenge_type: "2 Step Standard"
+    account_size: 10000                    # подтверждено: "Initial deposit 10 000.00" в самом экспорте
+    max_daily_loss_pct: 5.0
+    max_overall_drawdown_pct: 10.0
+    drawdown_type: "static"
+    profit_target_pct: 8.0                 # уточнить: 8% или 10% брали на Phase 1 при покупке этого конкретного счёта
+
+  - name: "FundingPips 12079224"
+    mt5_login: "12079224"
+    notion_account_name: "FP_10_f"         # подтверждено пользователем
+    challenge_type: "2 Step Standard"
+    account_size: 10000                    # подтверждено: "Initial deposit 10 000.00" в ReportHistory-12079224.html
+    max_daily_loss_pct: 5.0
+    max_overall_drawdown_pct: 10.0
+    drawdown_type: "static"
+    profit_target_pct: 8.0
+
+  - name: "FundingPips 12203980"
+    mt5_login: "12203980"
+    notion_account_name: "FP_25"           # подтверждено по Deposit=25000 в Notion Account (уникально среди счетов)
+    challenge_type: "2 Step Standard"
+    account_size: 25000                    # подтверждено: "Initial deposit 25 000.00" в ReportHistory-12203980.html — было 10000 (заглушка)
+    max_daily_loss_pct: 5.0
+    max_overall_drawdown_pct: 10.0
+    drawdown_type: "static"
+    profit_target_pct: 8.0
+
+matching:
+  # matcher.py сводит MT5-сделку с записью в Notion по символу + календарной
+  # дате (не по точному времени с допуском в минутах — время в Notion часто
+  # вводится вручную с округлением, допуск в минутах терял реальные пары).
+
+mt5_sync:
+  # Команда /sync импортирует закрытые сделки из РУЧНОГО терминала MT5.
+  # terminal_path — путь к terminal64.exe ручной торговли (НЕ ботовский терминал
+  # в AppData\Roaming). Подключение идёт строго по этому пути, чтобы не задеть
+  # ботовское/бэктестовое подключение. Терминал должен быть запущен и залогинен.
+  terminal_path: "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+  default_lookback_days: 30    # /sync без аргумента берёт сделки за столько дней назад
+
+notion:
+  trading_journal_data_source: "e0613367-6109-82ba-9782-07518e57e36b"
+  account_data_source: "26113367-6109-8341-a274-87ea0e356178"
+
+ai_review:
+  min_sample_size: 30       # не делать выводов о паттернах на выборке меньше этого
+  schedule: "weekly"        # daily | weekly
+
+news:
+  # Календарь — официальный JSON-фид ForexFactory (см. src/news/calendar.py).
+  # Красные (High) новости по валютам инструментов трейдера; JPY добавлен по
+  # его просьбе 2026-07-08. GER40 покрывается через EUR (немецкие релизы в
+  # фиде идут с country=EUR).
+  currencies: [USD, EUR, GBP, CAD, JPY]
+  impacts: [High]
+  instruments: [EURUSD, GBPUSD, USDCAD, USDJPY, GER40]
+  utc_offset_hours: 3        # показывать время как platform time FundingPips (UTC+3)
+  poll_minutes: 15           # период фонового цикла бота
+  release_delay_minutes: 10  # ждать после выхода, чтобы факт появился в источниках
+  catchup_hours: 24          # старше этого — не разбирать (бот был выключен), пометить пропущенным
+  digest_cutoff_days: 3      # дайджест недели досылается при запуске бота до вс+3 дня (вт включительно)
+  max_push_per_cycle: 3      # максимум LLM-разборов за один тик цикла

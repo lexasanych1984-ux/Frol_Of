@@ -1,0 +1,290 @@
+"""Telegram-бот — интерфейс: /review и /risk.
+
+Оба хендлера дёргают уже рабочие модули (risk.monitor, matching.matcher,
+ai_review.analyzer) на реальных данных из storage/db.py и Notion — без
+собственной бизнес-логики поверх них.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+
+from dotenv import load_dotenv
+from telegram import BotCommand, Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+from src.ai_review.analyzer import AIReviewer
+from src.matching.matcher import MatchResult, filter_pages_by_account, match_trades
+from src.news import service as news_service
+from src.news.analyst import NewsAnalyst
+from src.notion_sync.client import NotionClient
+from src.risk.limits import load_accounts_config, load_ai_review_config
+from src.risk.monitor import build_risk_report
+from src.setup_check.finder import build_setup_report, collect_setup_stats
+from src.storage.db import connect, get_trades
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+TELEGRAM_MESSAGE_LIMIT = 4000  # запас от жёсткого лимита Telegram в 4096 символов
+
+
+def _is_authorized(update: Update) -> bool:
+    """Бот отвечает только владельцу — иначе финансовые данные и Claude/Notion
+    вызовы доступны любому, кто найдёт бота по имени в Telegram."""
+    allowed_chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    return not allowed_chat_id or str(update.effective_chat.id) == str(allowed_chat_id)
+
+
+def _chunk_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
+    """AI-разбор и объединённые риск-отчёты легко превышают лимит Telegram
+    на длину сообщения (4096 символов) — reply_text() падает с
+    'Message is too long' и результат теряется молча (без хендлера ошибок)."""
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    current = ""
+    for line in text.split("\n"):
+        candidate = f"{current}\n{line}" if current else line
+        if len(candidate) > limit:
+            if current:
+                chunks.append(current)
+            current = line
+            while len(current) > limit:  # одна строка длиннее лимита — жёсткий разрез
+                chunks.append(current[:limit])
+                current = current[limit:]
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def _reply_long(update: Update, text: str) -> None:
+    for chunk in _chunk_message(text):
+        await update.message.reply_text(chunk)
+
+
+def _resolve_logins(context: ContextTypes.DEFAULT_TYPE, known_logins: list[str]) -> list[str]:
+    return list(context.args) if context.args else known_logins
+
+
+async def cmd_risk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update):
+        return
+
+    accounts = load_accounts_config()
+    logins = _resolve_logins(context, list(accounts.keys()))
+
+    conn = connect()
+    reports = []
+    for login in logins:
+        config = accounts.get(login)
+        if config is None:
+            reports.append(f"Счёт {login} не найден в config/config.yaml")
+            continue
+        trades = get_trades(conn, account_login=login)
+        reports.append(build_risk_report(config, trades))
+
+    await _reply_long(update, "\n\n---\n\n".join(reports))
+
+
+def _collect_matches(client: NotionClient, logins: list[str]) -> list[MatchResult]:
+    """Общая часть /review и /setup — сматченные (MT5 + Notion) сделки по счетам."""
+    accounts = load_accounts_config()
+    conn = connect()
+    all_pages = list(client.query_trading_journal())
+
+    account_name_cache: dict[str, str] = {}
+    pairs_cache: dict[str, str] = {}
+    matches: list[MatchResult] = []
+    for login in logins:
+        config = accounts.get(login)
+        if config is None or config.notion_account_name is None:
+            continue
+        trades = get_trades(conn, account_login=login)
+        pages = filter_pages_by_account(all_pages, client, config.notion_account_name, account_name_cache)
+        matches.extend(m for m in match_trades(trades, pages, client, pairs_cache) if m.matched)
+    return matches
+
+
+def _run_review(logins: list[str], period: str) -> str:
+    ai_review_cfg = load_ai_review_config()
+    matches = _collect_matches(NotionClient(), logins)
+    reviewer = AIReviewer()
+    return reviewer.review(matches, period=period, min_sample_size=ai_review_cfg.get("min_sample_size", 30))
+
+
+def _run_setup_check(query: str) -> str:
+    """Сверка по ВСЕМ счетам сразу — сетапы не привязаны к конкретному
+    проп-счёту, а выборка и так маленькая (1-2 сделки в неделю), сужать
+    её ещё и по счёту смысла нет."""
+    ai_review_cfg = load_ai_review_config()
+    accounts = load_accounts_config()
+    client = NotionClient()
+    matches = _collect_matches(client, list(accounts.keys()))
+    stats = collect_setup_stats(query, matches, client)
+    return build_setup_report(stats, min_sample_size=ai_review_cfg.get("min_sample_size", 30))
+
+
+async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update):
+        return
+
+    accounts = load_accounts_config()
+    logins = _resolve_logins(context, list(accounts.keys()))
+    period = f"по счетам {', '.join(logins)}"
+
+    await update.message.reply_text("Собираю сделки и прошу Claude разобрать — это может занять до минуты…")
+    review = await asyncio.to_thread(_run_review, logins, period)
+    await _reply_long(update, review)
+
+
+async def cmd_setup(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Приоритет 2: чек-лист перед входом — не сигнал, а сверка с историей.
+
+    Трейдер описывает сетап свободным текстом, бот ищет сделки с похожим
+    Setup/Entry в уже сматченной истории (см. src/setup_check/finder.py)
+    и отдаёт статистику по факту, чтобы притормозить импульсивный вход.
+    """
+    if not _is_authorized(update):
+        return
+
+    query = " ".join(context.args) if context.args else ""
+    if not query:
+        await update.message.reply_text("Использование: /setup <описание сетапа>, например /setup QM+OB EURUSD")
+        return
+
+    await update.message.reply_text("Ищу похожие сделки в истории…")
+    report = await asyncio.to_thread(_run_setup_check, query)
+    await _reply_long(update, report)
+
+
+# --- Новостной модуль (/week, /news + фоновый цикл) ---------------------------
+# Календарь — ForexFactory weekly feed; дайджест недели и разборы вышедших
+# новостей делает Claude с web search (src/news/). ПК не работает 24/7, поэтому
+# фоновый цикл на каждом тике "догоняет" пропущенное: невысланный воскресный
+# дайджест и вышедшие, но не разобранные новости (не старше catchup-окна).
+
+
+def _run_week_digest(force: bool) -> str:
+    cfg = news_service.load_news_config()
+    conn = news_service.open_db()
+    now = news_service.store.now_utc()
+    news_service.refresh_calendar(conn, cfg)
+    week = news_service.current_week_key(now)
+    if not force and news_service.store.digest_sent_at(conn, week) is not None:
+        return "Дайджест на эту неделю уже отправлял. Хочешь свежий — /week force"
+    return news_service.build_digest(conn, cfg, NewsAnalyst(), week, now)
+
+
+def _run_news_check() -> list[str]:
+    cfg = news_service.load_news_config()
+    conn = news_service.open_db()
+    now = news_service.store.now_utc()
+    news_service.refresh_calendar(conn, cfg)
+    results = news_service.process_due_events(conn, cfg, NewsAnalyst(), now)
+    if results:
+        return [_format_news_push(e, text, cfg.utc_offset_hours) for e, text in results]
+
+    upcoming = news_service.upcoming_today(conn, cfg, now)
+    if not upcoming:
+        return ["Свежих неразобранных новостей нет, и до конца дня красных новостей не ожидается."]
+    lines = [
+        f"{e.local_time(cfg.utc_offset_hours).strftime('%H:%M')} {e.country} — {e.title}"
+        for e in upcoming
+    ]
+    return ["Свежих неразобранных новостей нет. Ещё сегодня (UTC+%d):\n%s" % (cfg.utc_offset_hours, "\n".join(lines))]
+
+
+def _format_news_push(event, text: str, utc_offset_hours: int) -> str:
+    header = (
+        f"📰 {event.country} — {event.title} "
+        f"({event.local_time(utc_offset_hours).strftime('%d.%m %H:%M')})"
+    )
+    return f"{header}\n\n{text}"
+
+
+async def cmd_week(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update):
+        return
+    force = bool(context.args) and context.args[0].lower() == "force"
+    await update.message.reply_text("Собираю календарь недели и прошу Claude сделать обзор — до пары минут…")
+    digest = await asyncio.to_thread(_run_week_digest, force)
+    await _reply_long(update, digest)
+
+
+async def cmd_news(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _is_authorized(update):
+        return
+    await update.message.reply_text("Проверяю, что вышло, и разбираю через Claude…")
+    messages = await asyncio.to_thread(_run_news_check)
+    for msg in messages:
+        await _reply_long(update, msg)
+
+
+def _news_background_tick() -> list[str]:
+    """Один проход фонового цикла. Возвращает сообщения для отправки владельцу."""
+    cfg = news_service.load_news_config()
+    conn = news_service.open_db()
+    now = news_service.store.now_utc()
+    news_service.refresh_calendar(conn, cfg)
+
+    out: list[str] = []
+    week = news_service.digest_due(conn, cfg, now)
+    if week is not None:
+        out.append("🗓 Обзор предстоящей недели\n\n" + news_service.build_digest(conn, cfg, NewsAnalyst(), week, now))
+    for event, text in news_service.process_due_events(conn, cfg, NewsAnalyst(), now):
+        out.append(_format_news_push(event, text, cfg.utc_offset_hours))
+    return out
+
+
+async def _news_loop(app: Application) -> None:
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not chat_id:
+        logger.warning("TELEGRAM_CHAT_ID не задан — автопуш новостей выключен, доступны только /week и /news")
+        return
+    poll_minutes = news_service.load_news_config().poll_minutes
+    while True:
+        try:
+            for msg in await asyncio.to_thread(_news_background_tick):
+                for chunk in _chunk_message(msg):
+                    await app.bot.send_message(chat_id=chat_id, text=chunk)
+        except Exception:
+            logger.exception("Новостной цикл: тик упал, продолжу на следующем")
+        await asyncio.sleep(poll_minutes * 60)
+
+
+async def _post_init(app: Application) -> None:
+    """Регистрирует список команд в Telegram — то, что показывается
+    всплывающей подсказкой при вводе "/" в чате с ботом."""
+    await app.bot.set_my_commands(
+        [
+            BotCommand("risk", "Риск-отчёт по счетам (баланс, daily loss, drawdown)"),
+            BotCommand("review", "AI-разбор сделок по счетам (Claude)"),
+            BotCommand("setup", "Сверить сетап перед входом с историей похожих сделок"),
+            BotCommand("week", "Обзор красных новостей на неделю + макро-сценарии"),
+            BotCommand("news", "Разобрать вышедшие новости / показать что впереди"),
+        ]
+    )
+    # фоновый цикл: автопуш дайджеста и разборов, пока бот запущен
+    app.create_task(_news_loop(app))
+
+
+def build_app() -> Application:
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    app = Application.builder().token(token).post_init(_post_init).build()
+    app.add_handler(CommandHandler("risk", cmd_risk))
+    app.add_handler(CommandHandler("review", cmd_review))
+    app.add_handler(CommandHandler("setup", cmd_setup))
+    app.add_handler(CommandHandler("week", cmd_week))
+    app.add_handler(CommandHandler("news", cmd_news))
+    return app
+
+
+if __name__ == "__main__":
+    build_app().run_polling()

@@ -1,0 +1,7 @@
+_verify-clone/
+*.env
+*.key
+*.pem
+credentials*
+token*
+*.log

@@ -1,0 +1,4 @@
+- [Project checklist](project_checklist.md) — Trading Discipline AI roadmap, priorities, what's done/next, rejected ideas
+- [Notion changes require walkthrough](notion-changes-require-walkthrough.md) — never write to the trader's live Notion without approval + click-by-click demo; he restored the whole journal from backup after mistaking hidden duplicates for deleted trades (2026-07-08)
+- [Communicate in Russian](communicate-in-russian.md) — трейдер просит вести всё общение на русском языке
+- [Trader uses auto-journal](trader-uses-auto-journal.md) — трейдер перешёл на автожурнал «Trader»; ручное заполнение Notion (/sync, /trade) стало менее актуально, но проект просил доделать

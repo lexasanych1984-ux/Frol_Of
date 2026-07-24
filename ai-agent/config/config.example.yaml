@@ -1,0 +1,49 @@
+# Скопировать в config.yaml и заполнить реальными цифрами.
+# Риск-лимиты индивидуальны для каждого проп-счёта — уточнить по правилам
+# конкретного challenge/funded-аккаунта FundingPips (тип челленджа отличается
+# набором лимитов: 1 Step, 2 Step Standard, 2 Step Flex и т.д.)
+#
+# Пример реальных цифр для "2 Step Standard" (help.fundingpips.com, июль 2026):
+# max_daily_loss_pct: 5.0 (от большего из баланса/equity на начало дня,
+# сброс в 00:00 UTC+3), max_overall_drawdown_pct: 10.0 (static, от старта),
+# profit_target_pct: 8.0 или 10.0 на Phase 1, 5.0 на Phase 2. Для других
+# моделей (1 Step, 2 Step Flex, Zero) цифры отличаются — смотреть
+# соответствующую статью в help.fundingpips.com.
+
+accounts:
+  - name: "FundingPips 11620556"          # должно совпадать с Account.Name в Notion
+    mt5_login: "11620556"
+    challenge_type: "2 Step Standard"      # 1 Step / 2 Step Standard / 2 Step Flex / Zero / ...
+    account_size: 10000                    # USD
+    max_daily_loss_pct: 5.0                # % от баланса на начало дня
+    max_overall_drawdown_pct: 10.0         # % от initial balance (или equity — уточнить по правилам)
+    drawdown_type: "static"                # static | trailing — важно для расчёта лимита
+    profit_target_pct: 8.0                 # если challenge, а не funded
+
+  - name: "FundingPips 12079224"
+    mt5_login: "12079224"
+    challenge_type: "2 Step Standard"
+    account_size: 10000
+    max_daily_loss_pct: 5.0
+    max_overall_drawdown_pct: 10.0
+    drawdown_type: "static"
+    profit_target_pct: 8.0
+
+matching:
+  # допуск при сведении сделки MT5 с записью в Notion, минут
+  time_tolerance_minutes: 5
+
+mt5_sync:
+  # Команда /sync импортирует закрытые сделки из РУЧНОГО терминала MT5.
+  # terminal_path — путь к terminal64.exe ручной торговли (НЕ ботовский терминал
+  # в AppData\Roaming). Терминал должен быть запущен и залогинен.
+  terminal_path: "C:\\Program Files\\MetaTrader 5\\terminal64.exe"
+  default_lookback_days: 30    # /sync без аргумента берёт сделки за столько дней назад
+
+notion:
+  trading_journal_data_source: "e0613367-6109-82ba-9782-07518e57e36b"
+  account_data_source: "26113367-6109-8341-a274-87ea0e356178"
+
+ai_review:
+  min_sample_size: 30       # не делать выводов о паттернах на выборке меньше этого
+  schedule: "weekly"        # daily | weekly
