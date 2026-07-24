@@ -45,3 +45,6 @@ class FakeBroker:
 
     def close_position(self, symbol: str, side: Side) -> OrderResult:
         return OrderResult(True, "[FAKE] close")
+
+    def cancel_pending(self, symbol: str, side=None, magic=None) -> OrderResult:
+        return OrderResult(True, "[FAKE] cancel")

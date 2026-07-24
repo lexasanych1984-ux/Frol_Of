@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -72,6 +73,12 @@ class MT5Broker:
     def __init__(self, creds: MT5Creds):
         self.creds = creds
         self.mt5 = None  # заполняется в connect()
+        # Политика экспирации отложенных ордеров (задаётся из config в run.py):
+        # gtc — живёт до отмены; day — сгорает в конце торгового дня брокера;
+        # window — экспирация в конце окна CRT (pending_window_end/tz).
+        self.pending_expire = "gtc"
+        self.pending_window_end = "2300"
+        self.pending_window_tz = "Europe/Moscow"
 
     # ── Подключение ───────────────────────────────────────────────────────────
     def connect(self) -> None:
@@ -241,6 +248,12 @@ class MT5Broker:
                 req["type"] = mt5.ORDER_TYPE_BUY_LIMIT if is_long else mt5.ORDER_TYPE_SELL_LIMIT
             else:  # STOP
                 req["type"] = mt5.ORDER_TYPE_BUY_STOP if is_long else mt5.ORDER_TYPE_SELL_STOP
+            # Отложка сама не отменяется (GTC). Бэкстоп на случай пропущенной
+            # отмены-инвалидации: экспирация на стороне MT5 (см. self.pending_*).
+            type_time, expiration = self._pending_type_time(symbol)
+            req["type_time"] = type_time
+            if expiration:
+                req["expiration"] = expiration
 
         res = mt5.order_send(req)
         if res is None:
@@ -257,6 +270,93 @@ class MT5Broker:
                            ticket=getattr(res, "order", None), raw=res,
                            fill_price=fill_price, fill_volume=fill_volume,
                            position_id=position_id)
+
+    def _window_end_epoch(self) -> Optional[float]:
+        """Ближайший конец окна CRT (напр. 23:00 Europe/Moscow) как real-unix epoch.
+        None — если таймзона/формат не разобрались."""
+        try:
+            from datetime import datetime, timedelta
+            from zoneinfo import ZoneInfo
+            hhmm = str(self.pending_window_end)
+            h, m = int(hhmm[:2]), int(hhmm[2:4])
+            z = ZoneInfo(self.pending_window_tz)
+            now = datetime.now(z)
+            target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if target <= now:
+                target = target + timedelta(days=1)
+            return target.timestamp()
+        except Exception:
+            return None
+
+    def _pending_type_time(self, symbol: str):
+        """(type_time, expiration_server_epoch|0) для отложенного ордера.
+
+        Безопасно деградирует к GTC: если брокер/символ не поддерживает нужный
+        режим экспирации или расчётное время истечения уже почти в прошлом —
+        ставим GTC (ордер просто живёт, его снимет отмена-инвалидация), но НИКОГДА
+        не ставим ордер, который истечёт мгновенно (это была бы новая тихая потеря).
+        """
+        mt5 = self.mt5
+        mode = (self.pending_expire or "gtc").lower()
+        if mode == "gtc":
+            return mt5.ORDER_TIME_GTC, 0
+        info = mt5.symbol_info(symbol)
+        flags = getattr(info, "expiration_mode", 0) if info else 0
+        supports_day = bool(flags & mt5.SYMBOL_EXPIRATION_DAY)
+        supports_spec = bool(flags & mt5.SYMBOL_EXPIRATION_SPECIFIED)
+        if mode == "window":
+            real_exp = self._window_end_epoch()
+            tick = mt5.symbol_info_tick(symbol)
+            if real_exp is not None and supports_spec and tick is not None and tick.time:
+                # MT5 хранит время в серверной зоне: переводим real→server через
+                # смещение (server_now − real_now).
+                server_exp = int(real_exp + (tick.time - time.time()))
+                if server_exp > tick.time + 300:      # не ближе 5 мин — иначе GTC
+                    return mt5.ORDER_TIME_SPECIFIED, server_exp
+            # фоллбэк window → day → gtc
+            return (mt5.ORDER_TIME_DAY, 0) if supports_day else (mt5.ORDER_TIME_GTC, 0)
+        # mode == "day"
+        return (mt5.ORDER_TIME_DAY, 0) if supports_day else (mt5.ORDER_TIME_GTC, 0)
+
+    def cancel_pending(self, symbol: str, side: Optional[Side] = None,
+                       magic: Optional[int] = None) -> OrderResult:
+        """Снять неисполненные отложенные ордера по символу (инвалидация идеи).
+
+        side=None — снять любую сторону (CRT-отмена приходит и без long/short).
+        magic — снимать только ордера этой стратегии (страховка: не тронуть чужие
+        отложки на том же символе). Идемпотентно: нет отложки → мягкий no-op.
+        """
+        err = self._wrong_account()
+        if err:
+            return OrderResult(False, err)
+        mt5 = self.mt5
+        long_types = {mt5.ORDER_TYPE_BUY_LIMIT, mt5.ORDER_TYPE_BUY_STOP,
+                      mt5.ORDER_TYPE_BUY_STOP_LIMIT}
+        short_types = {mt5.ORDER_TYPE_SELL_LIMIT, mt5.ORDER_TYPE_SELL_STOP,
+                       mt5.ORDER_TYPE_SELL_STOP_LIMIT}
+        done, failed = [], []
+        for o in (mt5.orders_get(symbol=symbol) or []):
+            if magic is not None and getattr(o, "magic", None) != magic:
+                continue
+            is_long = o.type in long_types
+            is_short = o.type in short_types
+            if not (is_long or is_short):
+                continue  # не отложка (не должно случаться в orders_get, но на всякий)
+            if side is Side.LONG and not is_long:
+                continue
+            if side is Side.SHORT and not is_short:
+                continue
+            res = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
+            if res is not None and res.retcode == mt5.TRADE_RETCODE_DONE:
+                done.append(o.ticket)
+            else:
+                failed.append(f"{o.ticket}:{getattr(res, 'retcode', None)}")
+        where = f"{symbol}" + (f" {side.value}" if side else "")
+        if not done and not failed:
+            return OrderResult(True, f"нет отложек по {where} (уже снята/исполнена)")
+        if failed:
+            return OrderResult(False, f"отмена {where}: снято {done}, ошибки {failed}")
+        return OrderResult(True, f"отмена {where}: снято отложек {len(done)} {done}")
 
     def modify_sl_to_entry(self, symbol: str, side: Optional[Side] = None) -> OrderResult:
         """Перенести стоп в безубыток (к цене открытия) для позиции по символу.

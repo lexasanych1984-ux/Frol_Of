@@ -12,6 +12,7 @@
     ВЫХОД long EURUSD
     CRT ВЫХОД short GER40
     ВЫХОД long (после БУ) EURUSD
+    CRT ОТМЕНА short GER40       # инвалидация идеи → снять отложенный ордер
 """
 from __future__ import annotations
 
@@ -48,6 +49,8 @@ def _parse_json(obj: dict) -> Optional[Signal]:
         act = Action.EXIT
     elif action in ("be", "breakeven"):
         act = Action.BREAKEVEN
+    elif action in ("cancel", "отмена"):
+        act = Action.CANCEL
     else:
         act = Action.ENTRY
 
@@ -97,6 +100,17 @@ def _detect_strategy(text: str) -> str:
 def _parse_text(text: str) -> Optional[Signal]:
     is_crt = "CRT" in text
     strategy = _detect_strategy(text)
+
+    # ── Отмена отложенного ордера (инвалидация идеи) ──────────────────────────
+    # CRT шлёт "CRT ОТМЕНА short GER40", когда идея инвалидирована и отложка снята
+    # в стратегии (strategy.cancel_all). Сторона необязательна.
+    up = text.upper()
+    if "ОТМЕНА" in up or "CANCEL" in up:
+        low = text.lower()
+        side = Side.LONG if re.search(r"\blong\b", low) else (
+            Side.SHORT if re.search(r"\bshort\b", low) else None)
+        return Signal(action=Action.CANCEL, side=side,
+                      symbol_tv=_extract_symbol(text), strategy=strategy, raw=text)
 
     # ── Выход / безубыток ────────────────────────────────────────────────────
     if "ВЫХОД" in text.upper():

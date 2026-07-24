@@ -64,6 +64,28 @@ def test_crt_exit():
     assert s.symbol_tv == "GER40"
 
 
+def test_crt_cancel_text():
+    s = parse("CRT ОТМЕНА short GER40")
+    assert s.action is Action.CANCEL
+    assert s.side is Side.SHORT
+    assert s.symbol_tv == "GER40"
+    assert s.strategy == "crt"
+
+
+def test_crt_cancel_text_no_side():
+    s = parse("CRT ОТМЕНА GER40")
+    assert s.action is Action.CANCEL
+    assert s.side is None
+    assert s.symbol_tv == "GER40"
+
+
+def test_json_cancel():
+    s = parse('{"action":"cancel","side":"long","symbol":"FOREXCOM:GER40"}')
+    assert s.action is Action.CANCEL
+    assert s.side is Side.LONG
+    assert s.symbol_tv == "GER40"
+
+
 def test_json_entry():
     s = parse('{"action":"entry","side":"long","symbol":"FX:EURUSD",'
               '"order_kind":"market","entry":1.1435,"sl":1.141,"tp":1.149,"id":"x1"}')

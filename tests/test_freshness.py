@@ -19,6 +19,7 @@ from bot.state import State
 ENTRY = "LONG EURUSD | вход 1.14355 | SL 1.14100 | TP 1.14900 | RR 2.00"
 CRT_ENTRY = "CRT LONG GER40 | вход 24500 | SL 24400 | TP 24800 | RR 3.0"
 BREAKEVEN = "ВЫХОД long (после БУ) EURUSD"
+CANCEL = "CRT ОТМЕНА short GER40"
 
 
 class SpyBroker(FakeBroker):
@@ -28,6 +29,7 @@ class SpyBroker(FakeBroker):
         self.entries = []
         self.be = []
         self.closes = []
+        self.cancels = []
 
     def place_entry(self, sig, lots, symbol, comment=""):
         self.entries.append((symbol, lots, sig.side.value))
@@ -41,6 +43,10 @@ class SpyBroker(FakeBroker):
     def close_position(self, symbol, side):
         self.closes.append(symbol)
         return OrderResult(True, "[SPY] close")
+
+    def cancel_pending(self, symbol, side=None, magic=None):
+        self.cancels.append((symbol, side.value if side else None, magic))
+        return OrderResult(True, f"отмена {symbol}: снято отложек 1 [1]")
 
 
 class Notifier:
@@ -119,15 +125,44 @@ def test_breakeven_beyond_manage_limit_skipped(tmp_path):
     assert any("Пропущен по возрасту" in m for m in notifier.sent)
 
 
-# ── Per-strategy override ─────────────────────────────────────────────────────
-def test_per_strategy_entry_override(tmp_path):
-    fresh = FreshnessCfg(entry_max_age_sec=600, manage_max_age_sec=21600,
-                         per_strategy={"crt": {"entry_max_age_sec": 900}})
-    eng, broker, _ = _engine(tmp_path, freshness=fresh)
-    # 13 мин: старше общего 10 мин, но в пределах CRT-override 15 мин → исполняется.
-    eng.handle_raw(CRT_ENTRY, received_ts=time.time() - 13 * 60, source="webhook")
+# ── Отложенный вход не фильтруется по возрасту ────────────────────────────────
+def test_pending_entry_ignores_age(tmp_path):
+    # CRT-вход отложенный (stop): стоит на фикс. уровне, возраст не важен.
+    eng, broker, notifier = _engine(tmp_path)
+    eng.handle_raw(CRT_ENTRY, received_ts=time.time() - 3 * 3600, source="webhook")  # 3 ч
     assert len(broker.entries) == 1
     assert broker.entries[0][0] == "GER30m"
+    assert not any("Пропущен" in m for m in notifier.sent)
+
+
+# ── Per-strategy override (действует на market-вход) ──────────────────────────
+def test_per_strategy_entry_override(tmp_path):
+    fresh = FreshnessCfg(entry_max_age_sec=600, manage_max_age_sec=21600,
+                         per_strategy={"smc": {"entry_max_age_sec": 900}})
+    eng, broker, _ = _engine(tmp_path, freshness=fresh)
+    # 13 мин: старше общего 10 мин, но в пределах smc-override 15 мин → исполняется.
+    eng.handle_raw(ENTRY, received_ts=time.time() - 13 * 60, source="webhook")
+    assert len(broker.entries) == 1
+    assert broker.entries[0][0] == "EURUSD"
+
+
+# ── Отмена отложенного ордера (инвалидация идеи) ──────────────────────────────
+def test_cancel_calls_broker(tmp_path):
+    eng, broker, _ = _engine(tmp_path)
+    eng.handle_raw(CANCEL, received_ts=time.time() - 60, source="webhook")
+    assert len(broker.cancels) == 1
+    symbol, side, magic = broker.cancels[0]
+    assert symbol == "GER30m"
+    assert side == "short"
+    assert magic == 770002   # magic_for("crt")
+
+
+def test_cancel_within_manage_window_executes(tmp_path):
+    # Отмена — управление ордером: живёт в пределах manage_max_age (6 ч).
+    eng, broker, notifier = _engine(tmp_path)
+    eng.handle_raw(CANCEL, received_ts=time.time() - 3 * 3600, source="webhook")
+    assert len(broker.cancels) == 1
+    assert not any("Пропущен" in m for m in notifier.sent)
 
 
 # ── Дедуп между каналами (один fire двумя путями = одно исполнение) ───────────

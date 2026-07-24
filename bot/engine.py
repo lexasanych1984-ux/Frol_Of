@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Optional
 
 from . import execlog, slippage
-from .broker_mt5 import MT5Broker, OrderResult
+from .broker_mt5 import MT5Broker, OrderResult, magic_for
 from .config import Config, FreshnessCfg
 from .model import Action, OrderKind, Side, Signal
 from .parser import parse
@@ -70,6 +70,8 @@ class Engine:
                 self._handle_breakeven(sig)
             elif sig.action is Action.EXIT:
                 self._handle_exit(sig)
+            elif sig.action is Action.CANCEL:
+                self._handle_cancel(sig)
         finally:
             self.state.mark_seen(sig.dedup_key())
 
@@ -88,6 +90,12 @@ class Engine:
         if age <= 0:
             return True  # часы «в будущем» — не наша забота блокировать
         if sig.action is Action.ENTRY:
+            # Отложенный ордер (limit/stop) стоит на фиксированном уровне с
+            # фиксированными SL/TP — его риск не зависит от возраста сигнала, он
+            # просто ждёт цену. Гейт свежести нужен только market-входу (иначе
+            # ушедший рынок раздувает риск). Отмену CRT-идеи ловит Action.CANCEL.
+            if sig.order_kind is not OrderKind.MARKET:
+                return True
             limit, kind = self.freshness.entry_max_age(sig.strategy), "вход"
         else:
             limit, kind = self.freshness.manage_max_age_sec, "управление позицией"
@@ -347,3 +355,25 @@ class Engine:
         if res.ok:
             self._notify(f"⏹ ВЫХОД · закрытие позиции · {(sig.strategy or '?').upper()} · "
                          f"{sig.symbol_tv or mt5_symbol}")
+
+    # ── Отмена отложенного ордера (инвалидация идеи) ────────────────────────────
+    def _handle_cancel(self, sig: Signal) -> None:
+        """Снять неисполненный отложенный ордер: CRT-идея инвалидирована (закол за
+        экстремум манипуляции или конец дня). Отложка сама не GTC-отменится —
+        снимаем её здесь. Сторона необязательна (алерт CRT её не несёт)."""
+        mt5_symbol = self.cfg.mt5_symbol(sig.symbol_tv)
+        if not mt5_symbol:
+            log.warning("  ↳ отмена: нет карты символа для %s", sig.symbol_tv)
+            return
+        if self.cfg.dry_run:
+            log.info("  ↳ [DRY_RUN] снял бы отложку %s %s", mt5_symbol,
+                     sig.side.value if sig.side else "(любую)")
+            return
+        res = self.broker.cancel_pending(mt5_symbol, sig.side,
+                                         magic=magic_for(sig.strategy))
+        log.info("  ↳ отмена отложки %s: %s", "✅" if res.ok else "⚠️", res.detail)
+        # Уведомляем только когда реально что-то сняли (detail начинается с
+        # "отмена"), а не на холостой no-op ("нет отложек …") — чтобы не спамить.
+        if res.ok and res.detail.startswith("отмена"):
+            self._notify(f"🚫 ОТМЕНА · снят отложенный ордер · "
+                         f"{(sig.strategy or '?').upper()} · {sig.symbol_tv or mt5_symbol}")

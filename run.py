@@ -107,6 +107,16 @@ def cmd_trade(cfg, log):
     acc = broker.account()
     log.info("Подключено: счёт %s equity=%.2f %s", acc.login, acc.equity, acc.currency)
 
+    # Экспирация отложек (бэкстоп к отмене-инвалидации, см. config.pending_orders).
+    po = cfg.pending_orders or {}
+    broker.pending_expire = str(po.get("expire", "gtc")).lower()
+    broker.pending_window_end = str(po.get("window_end", "2300"))
+    broker.pending_window_tz = str(po.get("window_tz", "Europe/Moscow"))
+    if broker.pending_expire != "gtc":
+        log.info("Отложки: экспирация=%s%s", broker.pending_expire,
+                 f" (конец окна {broker.pending_window_end} {broker.pending_window_tz})"
+                 if broker.pending_expire == "window" else "")
+
     # Без этой кнопки терминал молча рубит КАЖДЫЙ ордер (retcode 10027),
     # а сигнал восстановить нельзя — предупреждаем громко и заранее.
     if not cfg.dry_run and broker.autotrading_enabled() is False:
@@ -223,6 +233,12 @@ def cmd_trade(cfg, log):
     # Опрос с таймаутом (а не блокирующий stream): цикл регулярно просыпается и
     # запускает проверки живости, даже когда сигналов нет. Короткий таймаут ещё
     # и держит Ctrl+C отзывчивым на Windows.
+    # Не давать ноуту уснуть по простою, пока крутится боевой цикл: Modern Standby
+    # замораживает CDP/TV и опрос буфера → сигналы протухают и режутся гейтом свежести
+    # (потеря сделки CRT 23.07). Не зависит от схемы питания; снимаем в finally.
+    from bot.keepawake import keep_system_awake, release_system_awake
+    keep_system_awake(log)
+
     poll_timeout = max(1.0, min(cfg.health.check_interval_sec, 5.0))
     log.info("Ожидание сигналов... (Ctrl+C для выхода). Мониторинг живости включён.")
     try:
@@ -248,6 +264,7 @@ def cmd_trade(cfg, log):
         src.stop()
         broker.shutdown()
         state.close()
+        release_system_awake()
 
 
 def cmd_stats(cfg, log):

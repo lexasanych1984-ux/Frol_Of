@@ -153,6 +153,7 @@ class Config:
     risk: dict = field(default_factory=dict)
     guards: dict = field(default_factory=dict)
     exits: dict = field(default_factory=dict)
+    pending_orders: dict = field(default_factory=dict)
     trading_hours: list = field(default_factory=list)
     logging_cfg: dict = field(default_factory=dict)
 
@@ -260,6 +261,7 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         risk=y.get("risk", {}) or {},
         guards=y.get("guards", {}) or {},
         exits=y.get("exits", {}) or {},
+        pending_orders=y.get("pending_orders", {}) or {},
         trading_hours=y.get("trading_hours", []) or [],
         logging_cfg=y.get("logging", {}) or {},
     )

@@ -11,6 +11,7 @@ class Action(str, Enum):
     ENTRY = "entry"      # открыть позицию
     EXIT = "exit"        # закрыть / выйти
     BREAKEVEN = "be"     # перенести стоп в безубыток
+    CANCEL = "cancel"    # снять неисполненный отложенный ордер (инвалидация идеи)
 
 
 class Side(str, Enum):
