@@ -1,0 +1,2 @@
+- [Strategy Lab — конструктор стратегий](strategy-lab-project.md) — что строим, статус v0.1, имя скрипта в TradingView, следующий шаг
+- [Работа с TradingView Desktop](tradingview-desktop-workflow.md) — заливка Pine с диска и что ломает его лэйаут

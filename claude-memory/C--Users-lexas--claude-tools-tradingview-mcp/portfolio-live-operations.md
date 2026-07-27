@@ -5,13 +5,14 @@ metadata:
   node_type: memory
   type: project
   originSessionId: a1fd24f9-2172-4f38-8ae8-2127b2640841
+  modified: 2026-07-25T14:03:21.746Z
 ---
 
 Проект «портфель» ЗАВЕРШЁН 14.07.2026; 15.07 добавлен 6-й поток CRT GER40 ([[daily-sweep-strategy]]). История разработки: [[smc-second-leg-strategy]] (FX-ядро, уроки), [[ger40-asia-sweep-strategy]] (индексы), [[daily-sweep-strategy]] (CRT). Грабли инструментов: [[tradingview-mcp-pine-editor-quirks]] — читать ПЕРЕД любым касанием TV.
 
 ## Боевое состояние (на 14.07.2026)
 
-Документ юзера (главный, поддерживать актуальным): `C:\Users\lexas\.claude\tools\tradingview-mcp\SMC-портфель-финал.md` — там итоговая таблица WR/RR/PF всех 5 потоков и конфиги.
+Документ юзера (главный, поддерживать актуальным): `C:\Users\lexas\tv-strategies\fx-indices\docs\SMC-портфель-финал.md` — там итоговая таблица WR/RR/PF всех 5 потоков и конфиги.
 
 Скрипты в облаке TV (аккаунт frol_OF), переименованы 14.07, поиск по «Frol»:
 - `Frol_OF_euro-funt_SMC_4H-15m_D-1H` (pine_id USER;89bffcd505124ef6bde6498a57d4002d, боевая версия v23 с alert_message+TRD; легенда SMC-2L)
@@ -35,7 +36,9 @@ metadata:
 2. **После любой правки конфига/кода**: сверять живую таблицу инстанса с эталоном (конфиг-строки: EURUSD «20–60п»+«±30м»; GBPJPY15 «ATR 1–3»; GBPJPY1ч «D→60»+«ATR 0.4–1.2»; TP-ликва везде OFF). Конфиг уже дважды тихо слетал на дефолты.
 3. **Алерт замораживает версию скрипта и инпуты навсегда**. Смена чего угодно = удалить алерт + создать новый через REST-рецепт (scripts/create-smc-alert.cjs как образец; инпуты снимать data_get_indicator с боевого инстанса).
 4. **Боксы сделок на H4** — снимок, сами не обновляются. Дорисовка: на ТФ потока прочитать свежие TRD-метки (data_get_pine_labels, study_filter=SMC/Asia), добавить в trades-*.txt, затем scripts/redraw-fix.cjs (рисует на H4 с докачкой истории; старые ids в drawn-boxes-*.json).
-5. **Файлы** в `C:\Users\lexas\.claude\tools\tradingview-mcp\`: trades-{eurusd-smc,gbpjpy-15m,gbpjpy-1h,ger40,nas100}.txt (пер-сделочные выгрузки), drawn-boxes-*.json (ids боксов), scripts/{inject-pine,dump-pine,batch-draw-trades,redraw-fix,create-smc-alert}.cjs, бэкапы кода smc-2koleno-v23-alerts.pine / asia-sweep-idx-v2.pine, кривая portfolio-curve.html + артефакт https://claude.ai/code/artifact/05908faa-7f25-4b24-9ac8-1888277c42b4.
+5. **Файлы РАЗДЕЛЕНЫ 25.07.2026** — подробности в [[tv-strategies-repo]].
+   - Код стратегий и артефакты → `C:\Users\lexas\tv-strategies\fx-indices\`: бэкапы smc-2koleno-v23-alerts.pine / asia-sweep-idx-v2.pine / crt-day-1h-strategy-v1.pine; `docs\SMC-портфель-финал.md`, `docs\crt-batch-results.md`; `data\trades-{eurusd-smc,gbpjpy-15m,gbpjpy-1h,ger40,nas100}.txt` (пер-сделочные выгрузки), `data\drawn-boxes-*.json` (ids боксов), `data\portfolio-curve.html` + артефакт https://claude.ai/code/artifact/05908faa-7f25-4b24-9ac8-1888277c42b4.
+   - Инструментарий ОСТАЛСЯ в `C:\Users\lexas\.claude\tools\tradingview-mcp\`: scripts/{inject-pine,dump-pine,batch-draw-trades,redraw-fix,create-smc-alert,create-crt-alert}.cjs, watchdog/, сам MCP-сервер. Пути к данным .cjs-скрипты берут аргументами, поэтому переезд их не сломал.
 
 ## Ожидания (чтобы не дёргаться)
 

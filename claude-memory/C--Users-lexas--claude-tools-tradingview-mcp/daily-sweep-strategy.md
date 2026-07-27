@@ -5,6 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 479bbed7-e28b-473a-81e0-c303045d1167
+  modified: 2026-07-25T14:02:56.827Z
 ---
 
 # CRT Day 1H (D1→H1) — ПРОЕКТ ЗАКРЫТ, ПОТОК В БОЮ с 15.07.2026
@@ -13,7 +14,7 @@ metadata:
 
 ## Боевой поток
 - **Алерт 5146158866**: FOREXCOM:GER40, H1, «Исполнение ордера», бессрочный, пуши `{{strategy.order.alert_message}}`. Рецепт пересоздания: `scripts/create-crt-alert.cjs` (перед запуском обновить pine_version и инпуты с инстанса!).
-- Скрипт в облаке: **«CRT Day 1H Strategy v1»** (pine_id USER;52d1b51daffe4a1999c592dea73647ef, боевая **v21**, легенда CRTS v1). Исходник: `C:\Users\lexas\.claude\tools\tradingview-mcp\crt-day-1h-strategy-v1.pine`. Вкладка «CRT D-1H» (layout Zw0KaG2i), инстанс dyjnlZ. Календарь новостей вшит до июля 2026 — обновлять к октябрю 2026 вместе с SMC/ASweep.
+- Скрипт в облаке: **«CRT Day 1H Strategy v1»** (pine_id USER;52d1b51daffe4a1999c592dea73647ef, боевая **v21**, легенда CRTS v1). Исходник: `C:\Users\lexas\tv-strategies\fx-indices\crt-day-1h-strategy-v1.pine`. Вкладка «CRT D-1H» (layout Zw0KaG2i), инстанс dyjnlZ. Календарь новостей вшит до июля 2026 — обновлять к октябрю 2026 вместе с SMC/ASweep.
 
 ## Правила стратегии (формализация, подтверждена эталоном юзера 09–12.03.2026 бар-в-бар)
 - **D1 (CRT-формация):** день-манипуляция свипает экстремум дня-диапазона (high>prevHigh и low>prevLow — шорт; зеркально лонг), закрытие — любое (inside+beyond, «any»); свип-фитиль попадает в дневную POI своего направления: OB-кластер (свечи от первой контртрендовой до свечи-импульса, зона по фитилям, живёт до закрытия за дальней границей), FVG (3-свечный), или pivot-уровень ликвидности (3 слева/1 справа, снимается проколом).
@@ -36,7 +37,8 @@ metadata:
 in_10 sess "1000-2300" | in_11 protMode "range" | in_12 nightMode "rearm" | in_13 tz Europe/Moscow | in_14 cancelBeyondManip true | in_16 rrMult 2.5 | in_17 riskPct 1 | in_18 newsMode 1 | in_21 reentryBE false | in_22 crtClose "any" | in_23 stopMode "dayExt" | in_25 entryInPrevRange true | отладка: in_0 dbg-метки on, in_2 бар-лог off, in_26 помесячная таблица off (включать для сверок кривой).
 История версий: v22 (allowOutside) и v23 (htf H4→M15) — исследовательские, оба варианта отбракованы и УДАЛЕНЫ из кода; **v24 (16.07) = чистый боевой код, идентичен v21, карта инпутов совпадает с боевой**. Алерт 5146158866 пришпилен к v21 — проверен 16.07: активен, inputs боевые. Тестовые инстансы с исследовательских прогонов удалены с графика Mx9XpNRS.
 
-## Файлы (`C:\Users\lexas\.claude\tools\tradingview-mcp\`)
+## Файлы — ПЕРЕЕХАЛИ 25.07.2026 в `C:\Users\lexas\tv-strategies\fx-indices\` ([[tv-strategies-repo]])
 - `crt-day-1h-strategy-v1.pine` — боевой исходник; `crt-day-detector-v0.2.pine` — визуальный детектор CRT-дней (на графике рядом со стратегией, облачное имя «CRT Day Detector v0.1»).
-- `crt-batch-results.md` — ВСЯ матрица прогонов (пары/индексы/крипта × режимы, фильтры, RR-сетка, deep, помесячно).
+- `docs\crt-batch-results.md` — ВСЯ матрица прогонов (пары/индексы/крипта × режимы, фильтры, RR-сетка, deep, помесячно).
+- Скрипты `.cjs` НЕ переезжали — остались в `C:\Users\lexas\.claude\tools\tradingview-mcp\scripts\`:
 - `scripts/create-crt-alert.cjs` — пересоздание алерта; `scripts/inject-pine-all.cjs` — заливка кода во все инстансы Monaco.
