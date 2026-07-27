@@ -84,7 +84,7 @@ class RiskManager:
             entry_price = market_price
         res = compute_lots(
             equity=account.equity,
-            risk_pct=float(self.r.get("risk_pct_per_trade", 1.0)),
+            risk_pct=self.cfg.risk_pct(sig.strategy),
             entry=entry_price,
             sl=sig.sl,
             spec=spec,

@@ -192,7 +192,7 @@ class Engine:
         появится при срабатывании — тогда факт остаётся пустым и досчитывается
         отчётом из истории MT5 по position_id.
         """
-        target = float(self.cfg.risk.get("risk_pct_per_trade", 1.0))
+        target = self.cfg.risk_pct(sig.strategy)
         equity = account.equity
         plan_risk_amount = round(equity * target / 100.0, 2)
         is_market = sig.order_kind is OrderKind.MARKET
