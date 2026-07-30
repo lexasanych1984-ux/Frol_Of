@@ -1,7 +1,7 @@
 """Фейковый брокер для dry-run без MT5 (демонстрация парсинга + сайзинга)."""
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from .broker_mt5 import Account, OrderResult, Position
 from .model import Side, Signal
@@ -26,7 +26,7 @@ class FakeBroker:
     def account(self) -> Account:
         return Account(0, self._equity, self._equity, self._currency, "DEMO-FAKE")
 
-    def positions(self) -> List[Position]:
+    def positions(self, magic: Optional[int] = None) -> List[Position]:
         return list(self._positions)
 
     def symbol_spec(self, symbol: str):
@@ -40,10 +40,12 @@ class FakeBroker:
     def place_entry(self, sig: Signal, lots: float, symbol: str, comment="") -> OrderResult:
         return OrderResult(True, f"[FAKE] {sig.side.value} {lots} {symbol}", ticket=1)
 
-    def modify_sl_to_entry(self, symbol: str, side: Side) -> OrderResult:
+    def modify_sl_to_entry(self, symbol: str, side: Side,
+                           magic: Optional[int] = None) -> OrderResult:
         return OrderResult(True, "[FAKE] BE")
 
-    def close_position(self, symbol: str, side: Side) -> OrderResult:
+    def close_position(self, symbol: str, side: Side,
+                       magic: Optional[int] = None) -> OrderResult:
         return OrderResult(True, "[FAKE] close")
 
     def cancel_pending(self, symbol: str, side=None, magic=None) -> OrderResult:

@@ -36,15 +36,38 @@ if (-not (Test-Path (Join-Path $Root 'logs'))) {
 
 # «1-го числа месяца» надёжнее всего задаётся через schtasks (/SC MONTHLY /D 1);
 # New-ScheduledTaskTrigger в Windows PowerShell 5.1 месячный триггер не умеет.
+# Время 10:00, а не 09:05: ПК поднимают ~09:30, и в 09:05 задача просто не запустилась бы.
 $cmd = "`"$runner`""
-schtasks /Create /F /TN "$TaskName" /TR "$cmd" /SC MONTHLY /D 1 /ST 09:05 `
+schtasks /Create /F /TN "$TaskName" /TR "$cmd" /SC MONTHLY /D 1 /ST 10:00 `
     /RL LIMITED | Out-Null
 
 if ($LASTEXITCODE -ne 0) {
     throw "schtasks вернул код $LASTEXITCODE — задача не создана."
 }
 
-Write-Host "Задача '$TaskName' зарегистрирована: 1-го числа месяца в 09:05."
+# schtasks не умеет задать «догнать пропущенный запуск» и не снимает запрет на
+# батарее — правим уже созданную задачу. Без этого отчёт молча пропадает, если
+# 1-го числа ПК спал или ноут не был в сети (ровно так же терялся сторож конфигов).
+# Правим через XML: Set-ScheduledTask на месячном триггере от schtasks падает
+# с «Параметр задан неверно» (cmdlet не умеет round-trip такого триггера).
+$tmp = Join-Path $env:TEMP 'report-task.xml'
+schtasks /query /tn "$TaskName" /xml ONE | Out-File -FilePath $tmp -Encoding unicode
+[xml]$x = Get-Content -Raw -Path $tmp
+$ns = $x.Task.xmlns
+$s = $x.Task.Settings
+$s.DisallowStartIfOnBatteries = 'false'
+$s.StopIfGoingOnBatteries = 'false'
+if ($s.StartWhenAvailable) { $s.StartWhenAvailable = 'true' } else {
+    $n = $x.CreateElement('StartWhenAvailable', $ns)
+    $n.InnerText = 'true'
+    $s.InsertBefore($n, $s.SelectSingleNode('*[local-name()="AllowStartOnDemand"]')) | Out-Null
+}
+$x.Save($tmp)
+schtasks /Create /F /TN "$TaskName" /XML $tmp | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "schtasks /XML вернул код $LASTEXITCODE — настройки не применены." }
+Remove-Item $tmp -Force
+
+Write-Host "Задача '$TaskName' зарегистрирована: 1-го числа месяца в 10:00 (догоняет пропуск)."
 Write-Host "  запускает: $runner  (python run.py report last notify)"
 Write-Host "  отчёты:    $(Join-Path $Root 'logs\reports')"
 Write-Host "Проверить сейчас:  Start-ScheduledTask -TaskName '$TaskName'"

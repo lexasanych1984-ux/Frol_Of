@@ -36,7 +36,7 @@ class SpyBroker(FakeBroker):
         return OrderResult(True, "[SPY]", ticket=1, fill_price=sig.entry,
                            fill_volume=lots, position_id=1)
 
-    def modify_sl_to_entry(self, symbol, side):
+    def modify_sl_to_entry(self, symbol, side, magic=None):
         self.be.append(symbol)
         return OrderResult(True, "[SPY] BE")
 
