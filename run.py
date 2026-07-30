@@ -180,7 +180,8 @@ def cmd_trade(cfg, log):
     src.start()
 
     monitor = HealthMonitor(notifier, cfg, broker=broker, source=local_src,
-                            metrics=metrics, webhook_source=webhook_src)
+                            metrics=metrics, webhook_source=webhook_src,
+                            state=state)
     # Живая тревога о серии стопов сверх исторического максимума (второе из двух
     # немедленных событий). Опрашивает историю MT5 раз в edge_check_interval_sec.
     tv_names = {mt5sym: tv for tv, mt5sym in cfg.symbol_map.items()}

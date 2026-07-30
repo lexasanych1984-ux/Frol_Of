@@ -33,11 +33,14 @@ class _FakeMT5:
     DEAL_ENTRY_IN = 0
     DEAL_TYPE_BUY = 0
 
-    def __init__(self, deals):
-        self._deals = deals
+    def __init__(self, deals, window_deals=None):
+        self._deals = deals              # полная история (запрос по position=)
+        self._window = window_deals      # что попало в окно frm..to (None = всё)
 
-    def history_deals_get(self, frm, to):
-        return list(self._deals)
+    def history_deals_get(self, frm=None, to=None, position=None):
+        if position is not None:
+            return [d for d in self._deals if d.position_id == position]
+        return list(self._window if self._window is not None else self._deals)
 
 
 class _FakeBroker:
@@ -116,6 +119,34 @@ def test_foreign_trades_ignored():
     mt5._deals += _closed(2, 0, "EURUSD", close_t=2000, profit=10.0)
     w.tick(now=1)
     assert notifier.messages == []     # чужие/ручные закрытия не уведомляем
+
+
+def test_notifies_close_of_long_held_position():
+    """Позиция, открытая раньше окна истории, тоже должна дать уведомление.
+
+    Так молча пропали два минуса (28.07 GBPJPY -976 и 30.07 EURUSD -1336): в окно
+    closewatch (history_days=3) входной дил не попадал, сделка считалась открытой,
+    Telegram молчал, а курсор закрытий стоял на 22.07.
+    """
+    old = _closed(1, 770001, "EURUSD", close_t=1000, profit=50.0)
+    notifier, state = _RecordingNotifier(), _FakeState()
+
+    mt5 = _FakeMT5(list(old))
+    w = _watcher(mt5, notifier, state)
+    w.tick(now=0)                       # первый старт — курсор на 1000
+    assert notifier.messages == []
+
+    # закрытие позиции, открытой задолго до окна: в окне виден только выход
+    entry = _Deal(7, "GBPJPY", 0, 1.93, 100, 0.0, 0, 218.353, 770001)
+    out = _Deal(7, "GBPJPY", 1, 1.93, 5000, -976.79, 1, 217.519, 770001)
+    mt5._deals = old + [entry, out]
+    mt5._window = old + [out]
+
+    w.tick(now=1)
+    assert len(notifier.messages) == 1
+    m = notifier.messages[0]
+    assert "ЗАКРЫТИЕ" in m and "GBPJPY" in m and "-976.79" in m
+    assert "218.353" in m               # цена входа взята из добранной истории
 
 
 def test_cursor_persisted_across_restart():
