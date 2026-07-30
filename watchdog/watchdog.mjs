@@ -51,12 +51,16 @@ const BOT_ENV = process.env.WATCHDOG_BOT_ENV || 'C:\\Users\\lexas\\bybit-tradfi-
  * поток остаётся расхождением, пока его не включат.
  */
 const STREAMS = [
-  { alert_id: 5140264864, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
-  { alert_id: 5140434449, name: 'SMC GBPJPY 15m', strategy: 'smc',    expected_active: true },
-  { alert_id: 5140434481, name: 'SMC GBPJPY 1H',  strategy: 'smc',    expected_active: true },
-  { alert_id: 5146158866, name: 'CRT GER40 1H',   strategy: 'crt',    expected_active: true },
-  { alert_id: 5177587028, name: 'Asia GER40 5m',  strategy: 'asweep', expected_active: true },
-  { alert_id: 5177587639, name: 'Asia NAS100 5m', strategy: 'asweep', expected_active: true },
+  // 2026-07-21: алерты пересозданы с webhook (облачный буфер) — новые alert_id.
+  // 2026-07-24: CRT-алерт пересоздан на v25 (инвалидация→ОТМЕНА, alert()-триггер) — новый id.
+  // 2026-07-30: все три SMC пересозданы на v24 (в скрипт добавлен max_bars_back=100 —
+  //   лечение «Остановлено — Ошибка расчёта», убившей EURUSD-алерт 29.07) — новые id.
+  { alert_id: 5261914051, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
+  { alert_id: 5261914152, name: 'SMC GBPJPY 15m', strategy: 'smc',    expected_active: true },
+  { alert_id: 5261914285, name: 'SMC GBPJPY 1H',  strategy: 'smc',    expected_active: true },
+  { alert_id: 5222165117, name: 'CRT GER40 1H',   strategy: 'crt',    expected_active: true },
+  { alert_id: 5198807488, name: 'Asia GER40 5m',  strategy: 'asweep', expected_active: true },
+  { alert_id: 5198837287, name: 'Asia NAS100 5m', strategy: 'asweep', expected_active: true },
 ];
 
 const args = process.argv.slice(2);

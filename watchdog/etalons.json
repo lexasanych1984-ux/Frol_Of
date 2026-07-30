@@ -1,6 +1,6 @@
 {
   "meta": {
-    "created": "2026-07-21 17:15:32",
+    "created": "2026-07-30 18:19:10",
     "monitor": "alert_frozen_inputs",
     "note": "READ-ONLY watchdog. inputs = замороженный снимок strategy-алерта (что реально стреляет). expected_active задаётся в манифесте watchdog.mjs, НЕ снимается с живого состояния. Пересобрать после осознанных изменений: node watchdog.mjs --baseline",
     "cdp": "127.0.0.1:9222",
@@ -10,11 +10,11 @@
     {
       "name": "SMC EURUSD 15m",
       "strategy": "smc",
-      "alert_id": 5140264864,
+      "alert_id": 5261914051,
       "symbol": "FX:EURUSD",
       "resolution": "15",
       "pine_id": "USER;89bffcd505124ef6bde6498a57d4002d",
-      "pine_version": "23.0",
+      "pine_version": "24.0",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -82,11 +82,11 @@
     {
       "name": "SMC GBPJPY 15m",
       "strategy": "smc",
-      "alert_id": 5140434449,
+      "alert_id": 5261914152,
       "symbol": "FX:GBPJPY",
       "resolution": "15",
       "pine_id": "USER;89bffcd505124ef6bde6498a57d4002d",
-      "pine_version": "23.0",
+      "pine_version": "24.0",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -154,11 +154,11 @@
     {
       "name": "SMC GBPJPY 1H",
       "strategy": "smc",
-      "alert_id": 5140434481,
+      "alert_id": 5261914285,
       "symbol": "FX:GBPJPY",
       "resolution": "60",
       "pine_id": "USER;89bffcd505124ef6bde6498a57d4002d",
-      "pine_version": "23.0",
+      "pine_version": "24.0",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -226,11 +226,11 @@
     {
       "name": "CRT GER40 1H",
       "strategy": "crt",
-      "alert_id": 5146158866,
+      "alert_id": 5222165117,
       "symbol": "FOREXCOM:GER40",
       "resolution": "60",
       "pine_id": "USER;52d1b51daffe4a1999c592dea73647ef",
-      "pine_version": "21.0",
+      "pine_version": "25.0",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -287,13 +287,13 @@
         "in_7": true,
         "in_8": true,
         "in_9": 72,
-        "pineFeatures": "{\"strategy\":1,\"plot\":1,\"str\":1,\"array\":1,\"ta\":1,\"math\":1,\"label\":1,\"table\":1,\"type\":1}"
+        "pineFeatures": "{\"strategy\":1,\"plot\":1,\"str\":1,\"array\":1,\"ta\":1,\"math\":1,\"alert\":1,\"label\":1,\"table\":1,\"type\":1}"
       }
     },
     {
       "name": "Asia GER40 5m",
       "strategy": "asweep",
-      "alert_id": 5177587028,
+      "alert_id": 5198807488,
       "symbol": "FOREXCOM:GER40",
       "resolution": "5",
       "pine_id": "USER;813c017650fa4c4886aa491991a4f339",
@@ -355,7 +355,7 @@
     {
       "name": "Asia NAS100 5m",
       "strategy": "asweep",
-      "alert_id": 5177587639,
+      "alert_id": 5198837287,
       "symbol": "FOREXCOM:NAS100",
       "resolution": "5",
       "pine_id": "USER;813c017650fa4c4886aa491991a4f339",
