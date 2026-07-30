@@ -1,6 +1,6 @@
 {
   "meta": {
-    "created": "2026-07-30 18:19:10",
+    "created": "2026-07-30 19:36:13",
     "monitor": "alert_frozen_inputs",
     "note": "READ-ONLY watchdog. inputs = замороженный снимок strategy-алерта (что реально стреляет). expected_active задаётся в манифесте watchdog.mjs, НЕ снимается с живого состояния. Пересобрать после осознанных изменений: node watchdog.mjs --baseline",
     "cdp": "127.0.0.1:9222",
@@ -15,6 +15,7 @@
       "resolution": "15",
       "pine_id": "USER;89bffcd505124ef6bde6498a57d4002d",
       "pine_version": "24.0",
+      "message": "{{strategy.order.alert_message}}",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -87,6 +88,7 @@
       "resolution": "15",
       "pine_id": "USER;89bffcd505124ef6bde6498a57d4002d",
       "pine_version": "24.0",
+      "message": "{{strategy.order.alert_message}}",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -159,6 +161,7 @@
       "resolution": "60",
       "pine_id": "USER;89bffcd505124ef6bde6498a57d4002d",
       "pine_version": "24.0",
+      "message": "{{strategy.order.alert_message}}",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -231,6 +234,7 @@
       "resolution": "60",
       "pine_id": "USER;52d1b51daffe4a1999c592dea73647ef",
       "pine_version": "25.0",
+      "message": "CRT GER40 1H (webhook) {{strategy.order.alert_message}}",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -298,6 +302,7 @@
       "resolution": "5",
       "pine_id": "USER;813c017650fa4c4886aa491991a4f339",
       "pine_version": "20.0",
+      "message": "{{strategy.order.alert_message}}",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {
@@ -360,6 +365,7 @@
       "resolution": "5",
       "pine_id": "USER;813c017650fa4c4886aa491991a4f339",
       "pine_version": "20.0",
+      "message": "{{strategy.order.alert_message}}",
       "expected_active": true,
       "live_active_at_baseline": true,
       "inputs": {

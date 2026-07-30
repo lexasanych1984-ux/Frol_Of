@@ -279,6 +279,14 @@ function diffStream(etalon, live) {
   if (etalon.pine_version && String(live.pine_version) !== String(etalon.pine_version)) {
     issues.push({ field: 'версия скрипта', was: etalon.pine_version, now: live.pine_version });
   }
+  // Текст сообщения — это РОВНО то, что парсит бот: любой лишний префикс или
+  // потерянный {{strategy.order.alert_message}} ломает исполнение сигнала.
+  // 30.07.2026 переименование алерта приклеило имя к телу сообщения, и сторож
+  // этого не увидел — сверял только инпуты/символ/ТФ/версию. undefined в эталоне
+  // = снят до появления проверки, тогда молчим до следующего --baseline.
+  if (etalon.message !== undefined && String(live.message) !== String(etalon.message)) {
+    issues.push({ field: 'текст сообщения', was: etalon.message, now: live.message });
+  }
   const eIn = etalon.inputs || {};
   const lIn = live.inputs || {};
   const keys = Array.from(new Set([...Object.keys(eIn), ...Object.keys(lIn)]))
@@ -317,6 +325,7 @@ async function runBaseline() {
       resolution: a.resolution,
       pine_id: a.pine_id,
       pine_version: a.pine_version,
+      message: a.message ?? null,        // то, что реально парсит бот
       expected_active: s.expected_active,
       live_active_at_baseline: a.active,
       inputs: a.inputs || {},
