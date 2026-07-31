@@ -1,0 +1,7 @@
+- [START: хэндофф по SMC](smc-session-handoff-entrypoint.md) — читать первым; активны оба алерта, A/B не стартован
+- [Работа с TradingView Desktop](tradingview-desktop-workflow.md) — заливка Pine с диска, создание нового скрипта и что ломает его лэйаут
+- [Пуш выполняет пользователь](git-push-runs-through-user.md) — git push блокируется классификатором, просить через ! с POSIX-путём
+- [Итог бэктеста SMC v25](smc-v25-poi-backtest-criteria.md) — POI-трекер и keepSetup отклонены, остаёмся на v24; ловушка формулы «winrate × 3R»
+- [Контрольный кейс SMC v25](smc-v25-acceptance-case.md) — EURUSD 30.07.2026: реальные границы FVG и зачем понадобился keepSetup
+- [Блокировка позицией в SMC](smc-position-blocking.md) — стратегия 45% времени в позиции, у открытой сделки нет тайм-стопа; ломает любой A/B
+- [Бимодальный MFE у SMC](smc-mfe-distribution.md) — сделка либо не доходит до 2R, либо берёт полный 3R; рычаг в отборе входов, не в тейке
