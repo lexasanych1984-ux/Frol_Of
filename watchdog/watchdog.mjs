@@ -59,7 +59,10 @@ const STREAMS = [
   //   (pine USER;bfab6682…, ver 2.0) ради тайм-стопа maxHoldH=42. У v25 пять лишних
   //   инпутов, поэтому in_32…in_36 значат не то, что в v24 — эталон v24 на него
   //   переигрывать НЕЛЬЗЯ. Старый алерт 5261914051 удалён. Новый id ниже.
-  { alert_id: 5272544462, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
+  // 2026-08-02: пол стопа EURUSD поднят 20 → 30 пипсов (in_27 = minStopPip) по итогам A/B
+  //   docs/smc-v25-stopfloor-ab-2026-08-02.md — принята ячейка A. Алерт пересоздан копией
+  //   живого (отличие ровно в in_27), старый 5272544462 удалён. Новый id ниже.
+  { alert_id: 5274108372, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
   { alert_id: 5261914152, name: 'SMC GBPJPY 15m', strategy: 'smc',    expected_active: true },
   { alert_id: 5261914285, name: 'SMC GBPJPY 1H',  strategy: 'smc',    expected_active: true },
   { alert_id: 5222165117, name: 'CRT GER40 1H',   strategy: 'crt',    expected_active: true },

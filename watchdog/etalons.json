@@ -1,6 +1,6 @@
 {
   "meta": {
-    "created": "2026-08-01 00:40:25",
+    "created": "2026-08-01 12:48:54",
     "monitor": "alert_frozen_inputs",
     "note": "READ-ONLY watchdog. inputs = замороженный снимок strategy-алерта (что реально стреляет). expected_active задаётся в манифесте watchdog.mjs, НЕ снимается с живого состояния. Пересобрать после осознанных изменений: node watchdog.mjs --baseline",
     "cdp": "127.0.0.1:9222",
@@ -10,7 +10,7 @@
     {
       "name": "SMC EURUSD 15m",
       "strategy": "smc",
-      "alert_id": 5272544462,
+      "alert_id": 5274108372,
       "symbol": "FX:EURUSD",
       "resolution": "15",
       "pine_id": "USER;bfab66822db34cd0b7320728c3fc119c",
@@ -40,7 +40,7 @@
         "in_24": 30,
         "in_25": true,
         "in_26": true,
-        "in_27": 20,
+        "in_27": 30,
         "in_28": 60,
         "in_29": false,
         "in_3": 2,
