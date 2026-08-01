@@ -55,7 +55,11 @@ const STREAMS = [
   // 2026-07-24: CRT-алерт пересоздан на v25 (инвалидация→ОТМЕНА, alert()-триггер) — новый id.
   // 2026-07-30: все три SMC пересозданы на v24 (в скрипт добавлен max_bars_back=100 —
   //   лечение «Остановлено — Ошибка расчёта», убившей EURUSD-алерт 29.07) — новые id.
-  { alert_id: 5261914051, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
+  // 2026-08-01: EURUSD переведён на ОТДЕЛЬНЫЙ скрипт «SMC 2-е колено v25 POI»
+  //   (pine USER;bfab6682…, ver 2.0) ради тайм-стопа maxHoldH=42. У v25 пять лишних
+  //   инпутов, поэтому in_32…in_36 значат не то, что в v24 — эталон v24 на него
+  //   переигрывать НЕЛЬЗЯ. Старый алерт 5261914051 удалён. Новый id ниже.
+  { alert_id: 5272544462, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
   { alert_id: 5261914152, name: 'SMC GBPJPY 15m', strategy: 'smc',    expected_active: true },
   { alert_id: 5261914285, name: 'SMC GBPJPY 1H',  strategy: 'smc',    expected_active: true },
   { alert_id: 5222165117, name: 'CRT GER40 1H',   strategy: 'crt',    expected_active: true },
