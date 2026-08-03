@@ -82,6 +82,8 @@ class MT5Broker:
         self.pending_expire = "gtc"
         self.pending_window_end = "2300"
         self.pending_window_tz = "Europe/Moscow"
+        # символы, по которым уже предупредили о неконвертированной стоимости тика
+        self._tick_value_warned: set = set()
 
     # ── Подключение ───────────────────────────────────────────────────────────
     def connect(self) -> None:
@@ -178,10 +180,20 @@ class MT5Broker:
             return tick_value
 
         converted = tick_value * rate
-        log.warning("%s: MT5 отдал стоимость тика без конвертации (%.6g %s); "
-                    "пересчитал по %s%s=%.5f → %.6g %s",
-                    s.name, tick_value, profit_ccy, profit_ccy, acc_ccy,
-                    rate, converted, acc_ccy)
+        # Раз на символ: срабатывание эвристики на НОВОМ инструменте должно быть
+        # заметно (иначе перебор риска опять уедет молча), но symbol_spec зовётся
+        # на каждый сигнал — ежедневный повтор одного и того же превратился бы в шум.
+        if s.name not in self._tick_value_warned:
+            self._tick_value_warned.add(s.name)
+            log.warning("%s: MT5 отдал стоимость тика без конвертации (%.6g %s = "
+                        "tick_size × contract_size); пересчитал по %s%s=%.5f → "
+                        "%.6g %s. Так ведёт себя GER30m; если это НОВЫЙ символ — "
+                        "проверь риск первой сделки по нему",
+                        s.name, tick_value, profit_ccy, profit_ccy, acc_ccy,
+                        rate, converted, acc_ccy)
+        else:
+            log.debug("%s: стоимость тика пересчитана по %s%s=%.5f → %.6g %s",
+                      s.name, profit_ccy, acc_ccy, rate, converted, acc_ccy)
         return converted
 
     def _cross_rate(self, frm: str, to: str) -> Optional[float]:

@@ -125,3 +125,26 @@ def test_already_converted_fx_untouched():
     """GBPJPY: MT5 уже сконвертировал (0.638 ≠ сырых 100 JPY) — не трогаем."""
     spec = _broker().symbol_spec("GBPJPY")
     assert abs(spec.tick_value - 0.6381) < 1e-12
+
+
+def test_warns_once_per_symbol(caplog):
+    """Эвристика должна быть видна на новом символе — но не каждый сигнал."""
+    import logging
+
+    b = _broker()
+    with caplog.at_level(logging.WARNING, logger="bot"):
+        for _ in range(3):
+            b.symbol_spec("GER30m")
+    hits = [r for r in caplog.records if "без конвертации" in r.getMessage()]
+    assert len(hits) == 1, [r.getMessage() for r in hits]
+    assert "GER30m" in hits[0].getMessage()
+
+
+def test_no_warning_for_converted_symbols(caplog):
+    import logging
+
+    b = _broker()
+    with caplog.at_level(logging.WARNING, logger="bot"):
+        b.symbol_spec("GBPJPY")
+        b.symbol_spec("USTECH100m")
+    assert not [r for r in caplog.records if "без конвертации" in r.getMessage()]
