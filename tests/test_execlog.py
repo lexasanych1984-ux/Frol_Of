@@ -61,3 +61,29 @@ def test_read_month_filters(tmp_path):
     jul = execlog.read_month(p, 2026, 7)
     assert len(jul) == 1
     assert jul[0]["ts"].startswith("2026-07")
+
+
+def test_migrate_header_adds_new_columns(tmp_path):
+    """Старый лог без tick_value дописывается без сдвига колонок."""
+    import csv
+
+    from bot import execlog as el
+    p = tmp_path / "executions.csv"
+    old_header = [f for f in el._HEADER if f not in ("tick_value", "tick_size")]
+    with open(p, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(old_header)
+        w.writerow(["x"] * len(old_header))
+
+    rec = _rec()
+    rec.tick_value, rec.tick_size = 0.115246, 0.1
+    el.append(p, rec)
+
+    rows = el.read(p)
+    assert len(rows) == 2
+    with open(p, encoding="utf-8-sig") as f:
+        assert f.readline().strip("\r\n").split(";") == el._HEADER
+    assert rows[0]["tick_value"] == ""          # старая строка — пустые новые поля
+    assert rows[0]["ts"] == "x"                 # и не поехала
+    assert rows[1]["tick_value"] == "0.115246"  # новая строка на своём месте
+    assert rows[1]["mt5_symbol"] == rec.mt5_symbol
