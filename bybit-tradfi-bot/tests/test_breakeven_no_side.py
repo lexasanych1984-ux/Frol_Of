@@ -33,13 +33,14 @@ def test_smc_breakeven_alert_keeps_side():
 
 
 class FakePos:
-    def __init__(self, ticket, symbol, side, price_open, tp):
+    def __init__(self, ticket, symbol, side, price_open, tp, magic=770002):
         self.ticket = ticket
         self.symbol = symbol
         self.side = side
         self.price_open = price_open
         self.tp = tp
         self.volume = 1.0
+        self.magic = magic          # 770002 = crt; 0 = ручная/чужая
 
 
 class FakeMT5:
@@ -70,8 +71,9 @@ class FakeBrokerBE:
     def _wrong_account(self):
         return None
 
-    def positions(self):
-        return self._positions
+    def positions(self, magic=None):
+        # та же семантика, что у MT5Broker.positions: magic задан → только свои
+        return [p for p in self._positions if magic is None or p.magic == magic]
 
 
 def test_breakeven_without_side_moves_stop_of_symbol_position():

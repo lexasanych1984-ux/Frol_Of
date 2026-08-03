@@ -30,11 +30,14 @@ class FakeMT5:
     DEAL_ENTRY_IN = 0
     DEAL_TYPE_BUY = 0
 
-    def __init__(self, deals):
-        self._deals = deals
+    def __init__(self, deals, window_deals=None):
+        self._deals = deals              # полная история (запрос по position=)
+        self._window = window_deals      # что попало в окно frm..to (None = всё)
 
-    def history_deals_get(self, frm, to):
-        return self._deals
+    def history_deals_get(self, frm=None, to=None, position=None):
+        if position is not None:
+            return [d for d in self._deals if d.position_id == position]
+        return list(self._window if self._window is not None else self._deals)
 
 
 class FakeAccount:

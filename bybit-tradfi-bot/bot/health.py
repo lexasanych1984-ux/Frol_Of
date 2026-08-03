@@ -49,6 +49,9 @@ OPTIONAL_TITLES = {
     "webhook": "Резервный webhook-буфер",
 }
 
+# День последней отправленной суточной сводки (в meta таблице State).
+_SUMMARY_DAY_KEY = "health_summary_day"
+
 
 @dataclass
 class CheckResult:
@@ -131,13 +134,16 @@ class HealthMonitor:
 
     def __init__(self, notifier, cfg, broker=None, source=None,
                  metrics: Optional[HealthMetrics] = None, webhook_source=None,
-                 clock: Callable[[], float] = time.time):
+                 state=None, clock: Callable[[], float] = time.time):
         self.notifier = notifier
         self.cfg = cfg
         self.broker = broker
         self.source = source
         self.webhook_source = webhook_source
         self.metrics = metrics or HealthMetrics(clock=clock)
+        # State нужен только суточной сводке: день последней отправки живёт в БД,
+        # иначе несколько запусков за сутки дублируют сводку (см. _maybe_daily_summary).
+        self.state = state
         self.clock = clock
 
         h = getattr(cfg, "health", None)
@@ -321,20 +327,41 @@ class HealthMonitor:
         hh, mm = self._summary_time()
         passed = (dt.hour, dt.minute) >= (hh, mm)
 
-        # Первый заход: если время сводки СЕГОДНЯ уже прошло на старте — помечаем
-        # день отправленным, чтобы не дампить сводку за едва наблюдавшийся день;
-        # первая настоящая сводка уйдёт завтра в срок. Если ещё не прошло —
-        # оставляем как есть, сводка уйдёт сегодня при пересечении времени.
+        # Пропущенное время сводки НЕ съедаем. Бот живёт не круглосуточно (старт
+        # ~09:30, останов ~23:20), и при daily_summary_at=09:00 сводка исчезала
+        # навсегда: стартовый заход помечал день отправленным «чтобы не дампить
+        # сводку за едва наблюдавшийся день», а следующее 09:00 бот уже не видел
+        # — за неделю не ушло ни одной сводки, и неделя нулевых сигналов прошла
+        # незамеченной. Теперь при старте после времени сводка уходит на первой
+        # же проверке, а день отправки хранится в State, чтобы несколько запусков
+        # за сутки не дублировали её.
         if not self._summary_inited:
             self._summary_inited = True
-            if passed:
-                self._last_summary_day = today
+            self._last_summary_day = self._load_summary_day()
 
         if self._last_summary_day == today:
             return
         if passed:
             self._emit(self._summary_text(now))
-            self._last_summary_day = today
+            self._save_summary_day(today)
+
+    def _load_summary_day(self) -> Optional[str]:
+        if self.state is None:
+            return self._last_summary_day
+        try:
+            return self.state.get_meta(_SUMMARY_DAY_KEY)
+        except Exception as e:      # БД не должна мешать мониторингу
+            log.warning("health: не прочитал день последней сводки: %s", e)
+            return self._last_summary_day
+
+    def _save_summary_day(self, day: str) -> None:
+        self._last_summary_day = day
+        if self.state is None:
+            return
+        try:
+            self.state.set_meta(_SUMMARY_DAY_KEY, day)
+        except Exception as e:
+            log.warning("health: не сохранил день последней сводки: %s", e)
 
     def _summary_text(self, now: float) -> str:
         signals, orders = self.metrics.take_daily()
@@ -342,9 +369,11 @@ class HealthMonitor:
         ok = self._last_ok_count
         failing = [self.titles[k] for k in self.check_order
                    if self._states[k].status == "fail"]
+        # «с прошлой сводки», а не «за сутки»: счётчики живут в процессе и
+        # обнуляются этой же отправкой, а бот перезапускается по нескольку раз.
         line = (f"📊 Жив. Аптайм {_human_uptime(self.metrics.uptime_sec())}. "
                 f"Проверки {ok}/{total}. "
-                f"Сигналов за сутки: {signals}, ордеров: {orders}.")
+                f"Сигналов с прошлой сводки: {signals}, ордеров: {orders}.")
         if failing:
             line += "\n⚠️ Не в норме: " + ", ".join(failing)
         return line
@@ -357,8 +386,13 @@ class HealthMonitor:
                    f"{self.interval // 60} мин.")
 
     def goodbye(self) -> None:
-        self._emit("⏹ Бот остановлен штатно. "
-                   "Сигналы за время простоя обработаны не будут.")
+        # Итог сессии прямо в сообщении об останове: бот выключают вечером, и
+        # именно эта строка показывает, что за день реально происходило (неделя
+        # с «Сигналов: 0, ордеров: 0» — повод идти проверять алерты в TV).
+        signals, orders = self.metrics.take_daily()
+        self._emit(f"⏹ Бот остановлен штатно. "
+                   f"За сессию — сигналов: {signals}, ордеров: {orders}. "
+                   f"Сигналы за время простоя обработаны не будут.")
 
     def start_first_check(self, now: Optional[float] = None) -> None:
         """Немедленная первая проверка на старте — не ждать 5 минут, чтобы

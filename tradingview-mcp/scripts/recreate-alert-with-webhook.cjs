@@ -21,6 +21,12 @@
 //   node scripts\recreate-alert-with-webhook.cjs --alert-id=5140264864 --webhook=https://<worker>.workers.dev/hook/<token>
 //   node scripts\recreate-alert-with-webhook.cjs --alert-id=5140264864 --webhook=... --dry   (только показать payload)
 //   node scripts\recreate-alert-with-webhook.cjs --list                                       (перечислить эталонные потоки)
+//
+// --pine-version=24.0 — пересоздать алерт на НОВОЙ версии скрипта. Нужен, когда скрипт
+//   правили ради фикса: алерт приколот к версии на момент создания, а в эталоне лежит
+//   старая (алерты-то ещё на ней и бегут), поэтому сама по себе правка в бой не попадёт.
+//   Инпуты при этом остаются эталонные — правка не должна добавлять/убирать input(),
+//   иначе индексы in_N сдвинутся и оверрайды станут ядовитыми.
 
 const fs = require('fs');
 const path = require('path');
@@ -41,9 +47,10 @@ function loadStreams() {
   return j.streams || [];
 }
 
-function buildPayload(stream, webhook) {
+function buildPayload(stream, webhook, pineVersion) {
   // Форма payload — по проверенным create-smc/create-crt рецептам; inputs/символ/TF/
-  // pine — из эталона (живой снимок). Меняем только web_hook (было null).
+  // pine — из эталона (живой снимок). Меняем только web_hook (было null) и, если задан
+  // --pine-version, версию скрипта (см. шапку).
   return {
     conditions: [{
       type: 'strategy',
@@ -52,7 +59,7 @@ function buildPayload(stream, webhook) {
         type: 'study',
         study: 'StrategyScript@tv-scripting-101',
         pine_id: stream.pine_id,
-        pine_version: stream.pine_version,
+        pine_version: pineVersion || stream.pine_version,
         inputs: stream.inputs,
       }],
       strategy_mode: 'strategy',
@@ -95,7 +102,11 @@ async function main() {
     process.exit(2);
   }
 
-  const payload = buildPayload(stream, webhook || 'https://EXAMPLE/hook/TOKEN');
+  const pineVersion = arg('pine-version');
+  const payload = buildPayload(stream, webhook || 'https://EXAMPLE/hook/TOKEN', pineVersion);
+  if (pineVersion) {
+    console.log(`Версия скрипта: эталонная ${stream.pine_version} → ${pineVersion} (--pine-version).`);
+  }
   if (flag('dry')) {
     console.log(`[DRY] ${stream.name} (${stream.symbol} ${stream.resolution}) — payload:`);
     console.log(JSON.stringify({ payload }, null, 2));

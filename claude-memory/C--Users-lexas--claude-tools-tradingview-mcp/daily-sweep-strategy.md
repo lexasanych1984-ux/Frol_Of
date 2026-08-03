@@ -13,7 +13,7 @@ metadata:
 Исследовано и задеплоено за 14–15.07.2026. Сопровождение — по [[portfolio-live-operations]] (6-й поток). Грабли TV: [[tradingview-mcp-pine-editor-quirks]] (пп. 29–31 — из этого проекта).
 
 ## Боевой поток
-- **Алерт 5146158866**: FOREXCOM:GER40, H1, «Исполнение ордера», бессрочный, пуши `{{strategy.order.alert_message}}`. Рецепт пересоздания: `scripts/create-crt-alert.cjs` (перед запуском обновить pine_version и инпуты с инстанса!).
+- **Алерт 5222165117** (пересоздан 24.07.2026, заморожен на pine **v25**; старый 5146158866/v21 мёртв — сверено с живым TV 27.07.2026): FOREXCOM:GER40, H1, «Исполнение ордера», бессрочный, пуши `{{strategy.order.alert_message}}`. Рецепт пересоздания: `scripts/create-crt-alert.cjs` (перед запуском обновить pine_version и инпуты с инстанса!).
 - Скрипт в облаке: **«CRT Day 1H Strategy v1»** (pine_id USER;52d1b51daffe4a1999c592dea73647ef, боевая **v21**, легенда CRTS v1). Исходник: `C:\Users\lexas\tv-strategies\fx-indices\crt-day-1h-strategy-v1.pine`. Вкладка «CRT D-1H» (layout Zw0KaG2i), инстанс dyjnlZ. Календарь новостей вшит до июля 2026 — обновлять к октябрю 2026 вместе с SMC/ASweep.
 
 ## Правила стратегии (формализация, подтверждена эталоном юзера 09–12.03.2026 бар-в-бар)

@@ -107,10 +107,13 @@ class MT5Broker:
         return Account(login=i.login, equity=i.equity, balance=i.balance,
                        currency=i.currency, server=i.server)
 
-    def positions(self) -> List[Position]:
+    def positions(self, magic: Optional[int] = None) -> List[Position]:
+        """magic задан — только позиции этой стратегии (ручные и чужие не наши)."""
         raw = self.mt5.positions_get() or []
         out = []
         for p in raw:
+            if magic is not None and getattr(p, "magic", None) != magic:
+                continue
             side = Side.LONG if p.type == self.mt5.POSITION_TYPE_BUY else Side.SHORT
             out.append(Position(ticket=p.ticket, symbol=p.symbol, side=side,
                                 volume=p.volume, price_open=p.price_open,
@@ -358,20 +361,25 @@ class MT5Broker:
             return OrderResult(False, f"отмена {where}: снято {done}, ошибки {failed}")
         return OrderResult(True, f"отмена {where}: снято отложек {len(done)} {done}")
 
-    def modify_sl_to_entry(self, symbol: str, side: Optional[Side] = None) -> OrderResult:
+    def modify_sl_to_entry(self, symbol: str, side: Optional[Side] = None,
+                           magic: Optional[int] = None) -> OrderResult:
         """Перенести стоп в безубыток (к цене открытия) для позиции по символу.
 
         side=None — сторона в алерте не указана. Так шлёт CRT: её алерт
         безубытка выглядит как "CRT ВЫХОД GER40 (после БУ)", без long/short.
         Тогда двигаем стоп у всех позиций по символу — при
         guards.max_open_positions_per_symbol=1 она там всё равно одна.
+
+        magic задан — трогаем ТОЛЬКО свою позицию этой стратегии. Иначе БУ-алерт
+        (а этот путь включён по умолчанию) переставил бы стоп и у позиции,
+        открытой руками на том же счёте по тому же символу.
         """
         err = self._wrong_account()
         if err:
             return OrderResult(False, err)
         mt5 = self.mt5
         done, failed = [], []
-        for p in self.positions():
+        for p in self.positions(magic=magic):
             if p.symbol != symbol or (side is not None and p.side != side):
                 continue
             req = {
@@ -394,14 +402,19 @@ class MT5Broker:
             return OrderResult(False, f"BE {where}: перенесено {done}, ошибки {failed}")
         return OrderResult(True, f"BE {where}: стоп в безубыток, позиций {len(done)}")
 
-    def close_position(self, symbol: str, side: Optional[Side] = None) -> OrderResult:
+    def close_position(self, symbol: str, side: Optional[Side] = None,
+                       magic: Optional[int] = None) -> OrderResult:
         """side=None — закрыть позицию по символу независимо от стороны
-        (алерты выхода CRT тоже идут без long/short)."""
+        (алерты выхода CRT тоже идут без long/short).
+
+        magic задан — трогаем ТОЛЬКО свою позицию этой стратегии. Без фильтра
+        exit-алерт закрыл бы любую позицию по символу, включая открытую руками на
+        том же счёте (у cancel_pending фильтр по magic был, здесь — нет)."""
         err = self._wrong_account()
         if err:
             return OrderResult(False, err)
         mt5 = self.mt5
-        for p in self.positions():
+        for p in self.positions(magic=magic):
             if p.symbol == symbol and (side is None or p.side == side):
                 tick = mt5.symbol_info_tick(symbol)
                 closing_long = p.side is Side.LONG

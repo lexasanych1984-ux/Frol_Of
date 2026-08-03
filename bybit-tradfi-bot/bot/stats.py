@@ -58,6 +58,20 @@ def collect_closed(mt5, days: int = 365,
         if d.position_id and d.symbol:  # пропускаем баланс/депозиты
             by_pos.setdefault(d.position_id, []).append(d)
 
+    # Окно days режет ИСТОРИЮ ДИЛОВ, а не сделки: у позиции, открытой раньше
+    # окна, входного дила в выборке нет — группа выглядит «ещё открытой» (ниже
+    # `if not ins: continue`) и сделка молча исчезает из отчёта, Telegram и
+    # Notion. Так пропали два закрытия: GBPJPY (жила 5 дн.) при days=3 в
+    # closewatch и EURUSD (жила 10 дн.) при days=7 в Notion-синке — уведомлений
+    # о минусах не пришло вовсе. Поэтому для групп без входа добираем ПОЛНУЮ
+    # историю позиции по её id: days теперь честно значит «закрыта за последние
+    # N дней», а не «открыта И закрыта внутри N дней».
+    for pid, ds in list(by_pos.items()):
+        if not any(d.entry == mt5.DEAL_ENTRY_IN for d in ds):
+            full = mt5.history_deals_get(position=pid)
+            if full:
+                by_pos[pid] = list(full)
+
     out: List[ClosedTrade] = []
     for pid, ds in by_pos.items():
         ins = [d for d in ds if d.entry == mt5.DEAL_ENTRY_IN]

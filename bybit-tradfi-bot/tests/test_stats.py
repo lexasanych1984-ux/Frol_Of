@@ -38,11 +38,14 @@ class FakeMT5:
     DEAL_ENTRY_IN = 0
     DEAL_TYPE_BUY = 0
 
-    def __init__(self, deals):
-        self._deals = deals
+    def __init__(self, deals, window_deals=None):
+        self._deals = deals              # полная история (запрос по position=)
+        self._window = window_deals      # что попало в окно frm..to (None = всё)
 
-    def history_deals_get(self, frm, to):
-        return self._deals
+    def history_deals_get(self, frm=None, to=None, position=None):
+        if position is not None:
+            return [d for d in self._deals if d.position_id == position]
+        return list(self._window if self._window is not None else self._deals)
 
 
 def test_strategy_names_match_notion_options():
@@ -70,6 +73,39 @@ def test_symbol_alias_maps_broker_names_to_tv_tickers():
     assert trades[0].symbol in NOTION_SYMBOLS
     assert trades[0].strategy == "CRT"
     assert trades[0].profit == 150.0
+
+
+def test_trade_opened_before_window_is_still_collected():
+    """Сделка, чей ВХОД старше окна days, обязана попасть в выборку.
+
+    Реальный отказ 30.07.2026: EURUSD-позиция жила 10 дней, в окно closewatch
+    (days=3) и Notion-синка (days=7) попал только выходной дил — группа выглядела
+    «ещё открытой», сделка исчезла, и минус на -1336 USD не ушёл ни в Telegram,
+    ни в журнал. Полную историю позиции добираем запросом по position=.
+    """
+    import time as _t
+    now = int(_t.time())
+    entry = FakeDeal(9, "EURUSD", entry=0, volume=3.66, time=now - 10 * 86400,
+                     magic=770001, price=1.14115, type_=1)   # 1 = SELL → short
+    exit_ = FakeDeal(9, "EURUSD", entry=1, volume=3.66, time=now - 3600,
+                     profit=-1336.35, price=1.14495, type_=0)
+    # в окне виден ТОЛЬКО выход — вход остался за границей days
+    mt5 = FakeMT5([entry, exit_], window_deals=[exit_])
+
+    trades = st.collect_closed(mt5, days=3)
+    assert len(trades) == 1, "сделка с давним входом молча пропала из выборки"
+    t = trades[0]
+    assert t.position_id == 9 and t.strategy == "SMC" and t.side == "short"
+    assert t.price_open == 1.14115 and t.profit == -1336.35
+
+
+def test_still_open_position_is_not_reported_as_closed():
+    """Открытая позиция (в окне только вход) закрытой считаться не должна."""
+    import time as _t
+    now = int(_t.time())
+    entry = FakeDeal(11, "GBPJPY", entry=0, volume=1.0, time=now - 3600,
+                     magic=770001, price=218.35)
+    assert st.collect_closed(FakeMT5([entry]), days=3) == []
 
 
 def test_symbol_without_alias_is_left_as_is():

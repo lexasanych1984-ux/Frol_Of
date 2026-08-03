@@ -35,6 +35,7 @@ $MaxFileMB = 50
 # source dir -> backup subfolder
 $Sources = @(
   @{ Name = 'tradingview-mcp';     Path = 'C:\Users\lexas\.claude\tools\tradingview-mcp' },
+  @{ Name = 'tv-strategies';       Path = 'C:\Users\lexas\tv-strategies' },
   @{ Name = 'bybit-tradfi-bot';    Path = 'C:\Users\lexas\bybit-tradfi-bot' },
   @{ Name = 'ai-agent';            Path = 'D:\MY\Crypto\AI agent' },
   @{ Name = 'mql5-src';            Path = 'C:\Users\lexas\mql5-src' },
@@ -55,6 +56,23 @@ $ExcludeFiles = @('.env','.env.*','*.key','*.pem','credentials*','token*','id_rs
 
 # files NOT scanned for secrets (noisy hashes/binaries) - still backed up
 $ScanIgnore = @('package-lock.json','*-lock.json','yarn.lock','pnpm-lock.yaml','*.map','*.min.js','*.min.css','*.ex5','*.swp','*.png','*.jpg','*.jpeg','*.gif','*.pdf','*.zip')
+
+# --- git audit: repos whose OWN history must live off this machine ---------
+# Remote is EXPLICIT per repo on purpose. tradingview-mcp pushes to 'mine', while
+# its 'origin' is the upstream project we have no write access to - assuming
+# 'origin' everywhere is exactly what hid 8 unpushed commits until 2026-08-02.
+# Empty Remote = repo has none: its commits exist ONLY here, because robocopy
+# mirrors working files but '.git' is in $ExcludeDirs.
+$GitRepos = @(
+  @{ Name = 'tv-strategies';    Path = 'C:\Users\lexas\tv-strategies';                 Remote = 'origin'; Branch = 'main' },
+  @{ Name = 'tradingview-mcp';  Path = 'C:\Users\lexas\.claude\tools\tradingview-mcp'; Remote = 'mine';   Branch = 'main' },
+  @{ Name = 'bybit-tradfi-bot'; Path = 'C:\Users\lexas\bybit-tradfi-bot';              Remote = 'origin'; Branch = 'master' },
+  @{ Name = 'projects-backup';  Path = $RepoRoot;                                      Remote = 'origin'; Branch = $Branch },
+  @{ Name = 'ai-agent';         Path = 'D:\MY\Crypto\AI agent';                        Remote = '';       Branch = 'main' },
+  @{ Name = 'mql5-src';         Path = 'C:\Users\lexas\mql5-src';                      Remote = '';       Branch = 'master' }
+)
+# NOT .log on purpose: repo .gitignore excludes *.log, the audit would never commit.
+$AuditLog = Join-Path $RepoRoot 'git-audit.md'
 
 # --------------------------- HELPERS ---------------------------
 function Say([string]$m) { Write-Host $m }
@@ -250,6 +268,137 @@ function Invoke-SecretScan {
   return $findings
 }
 
+# --------------------------- GIT AUDIT ---------------------------
+# Read-only health check of the OTHER repos: work that never left this machine.
+# Never commits, never pushes, never modifies their .git - only queries.
+
+function Get-SafeRemoteUrl([string]$path, [string]$remote) {
+  if (-not $remote) { return '' }
+  $u = (git -C $path remote get-url $remote 2>$null)
+  $global:LASTEXITCODE = 0
+  if (-not $u) { return '' }
+  # drop user:token@ if anyone ever embedded credentials in the URL
+  return ($u -replace '://[^/@]*@', '://')
+}
+
+function Invoke-GitAudit {
+  # Unattended task: git must FAIL on a missing credential, not hang on a prompt.
+  $prevPrompt = $env:GIT_TERMINAL_PROMPT
+  $env:GIT_TERMINAL_PROMPT = '0'
+  # PS 5.1 turns a native command's stderr into ErrorRecords, and the script-wide
+  # 'Stop' preference then makes a harmless line abort everything: git writes
+  # "Everything up-to-date" to STDERR, which killed the first -DryRun of this
+  # patch. The audit is a report, never a gate. Use 2>$null, never 2>&1.
+  $prevEap = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  $rows = @()
+  try {
+    foreach ($r in $GitRepos) {
+      $row = [pscustomobject]@{
+        Name = $r.Name; Branch = ''; Ahead = $null; Dirty = 0
+        Remote = $r.Remote; Url = ''; Level = 'OK'; Note = ''
+      }
+      if (-not (Test-Path -LiteralPath (Join-Path $r.Path '.git'))) {
+        $row.Level = 'WARN'; $row.Note = 'not a git repo or path missing'
+        $rows += $row; continue
+      }
+      $row.Branch = (git -C $r.Path rev-parse --abbrev-ref HEAD 2>$null)
+      # The backup repo itself is ALWAYS dirty here: the audit runs after robocopy
+      # and before the commit. Counting it would raise a WARN every single week,
+      # which is how you learn to ignore warnings. Ahead/push checks still apply.
+      if ($r.Path -ne $RepoRoot) {
+        $row.Dirty = @(git -C $r.Path status --porcelain --untracked-files=no 2>$null).Count
+      }
+      $global:LASTEXITCODE = 0
+      if ($row.Branch -ne $r.Branch) {
+        $row.Level = 'WARN'; $row.Note = "on branch '$($row.Branch)', expected '$($r.Branch)'"
+        $rows += $row; continue
+      }
+      if (-not $r.Remote) {
+        $row.Level = 'WARN'
+        $row.Note = 'no remote: history exists only on this machine'
+        $rows += $row; continue
+      }
+      if (-not ((git -C $r.Path remote 2>$null) -contains $r.Remote)) {
+        $global:LASTEXITCODE = 0
+        $row.Level = 'ERROR'; $row.Note = "remote '$($r.Remote)' is not configured"
+        $rows += $row; continue
+      }
+      $global:LASTEXITCODE = 0
+      $row.Url = Get-SafeRemoteUrl $r.Path $r.Remote
+
+      # Authoritative remote tip via ls-remote, NOT the local tracking ref:
+      # a stale origin/main would under-report 'ahead'.
+      $ls = (git -C $r.Path ls-remote --heads $r.Remote ('refs/heads/' + $r.Branch) 2>$null)
+      if ($LASTEXITCODE -ne 0) {
+        $global:LASTEXITCODE = 0
+        $row.Level = 'ERROR'; $row.Note = 'cannot read remote (auth or network)'
+        $rows += $row; continue
+      }
+      $global:LASTEXITCODE = 0
+      $sha = ''
+      foreach ($l in @($ls)) { if ("$l" -match '^([0-9a-f]{40})\s') { $sha = $Matches[1]; break } }
+      if (-not $sha) {
+        $row.Level = 'WARN'; $row.Note = "branch '$($r.Branch)' does not exist on remote yet"
+        $rows += $row; continue
+      }
+      $cnt = (git -C $r.Path rev-list --count ($sha + '..HEAD') 2>$null)
+      if ($LASTEXITCODE -ne 0 -or -not $cnt) {
+        $global:LASTEXITCODE = 0
+        $row.Level = 'WARN'; $row.Note = 'remote tip unknown locally - run git fetch'
+        $rows += $row; continue
+      }
+      $global:LASTEXITCODE = 0
+      $row.Ahead = [int]$cnt
+
+      # Write permission WITHOUT sending anything: --dry-run still asks the server
+      # for git-receive-pack, so a read-only remote returns 403 here exactly as a
+      # real push would. This is the check that would have caught the 403 upfront.
+      git -C $r.Path push --dry-run $r.Remote ('HEAD:refs/heads/' + $r.Branch) 2>$null | Out-Null
+      $pushOk = ($LASTEXITCODE -eq 0)
+      $global:LASTEXITCODE = 0
+
+      if (-not $pushOk) {
+        $row.Level = 'ERROR'; $row.Note = 'push refused (no write access?)'
+      } elseif ($row.Ahead -gt 0) {
+        $row.Level = 'WARN'; $row.Note = "$($row.Ahead) commit(s) never pushed"
+      } elseif ($row.Dirty -gt 0) {
+        $row.Level = 'WARN'; $row.Note = "$($row.Dirty) uncommitted change(s)"
+      }
+      $rows += $row
+    }
+  } finally {
+    $env:GIT_TERMINAL_PROMPT = $prevPrompt
+    $ErrorActionPreference = $prevEap
+    $global:LASTEXITCODE = 0
+  }
+  return $rows
+}
+
+function Write-AuditLog($rows, [string]$stamp) {
+  $out = @()
+  if (Test-Path -LiteralPath $AuditLog) {
+    $out += [System.IO.File]::ReadAllLines($AuditLog)
+  } else {
+    $out += '# git audit'
+    $out += ''
+    $out += 'Appended by backup.ps1 on every run. Read-only check of the other repos:'
+    $out += 'unpushed commits, push permission, uncommitted changes. Newest section last.'
+    $out += ''
+  }
+  $out += ('## ' + $stamp)
+  $out += ''
+  $out += '| repo | branch | ahead | dirty | remote | level | note |'
+  $out += '|---|---|---|---|---|---|---|'
+  foreach ($r in $rows) {
+    if ($null -eq $r.Ahead) { $a = '-' } else { $a = [string]$r.Ahead }
+    $rem = $r.Remote; if (-not $rem) { $rem = '(none)' }
+    $out += ('| {0} | {1} | {2} | {3} | {4} | {5} | {6} |' -f $r.Name, $r.Branch, $a, $r.Dirty, $rem, $r.Level, $r.Note)
+  }
+  $out += ''
+  [System.IO.File]::WriteAllLines($AuditLog, $out, [System.Text.UTF8Encoding]::new($false))
+}
+
 # --------------------------- PREVIEW ---------------------------
 function Show-Preview {
   # Walk the filesystem directly (robust to Cyrillic / spaces in names, unlike
@@ -296,6 +445,20 @@ try {
   Say "  -> claude-memory"; Sync-Memory
   Say "  -> mql5-src\terminal-copy"; Sync-TerminalMq5
 
+  # Audit runs BEFORE 'git add -A' so its log lands in this same commit.
+  # Findings never abort the backup: saving files matters more than reporting.
+  Say "Git audit (other repos)..."
+  $audit = Invoke-GitAudit
+  Write-AuditLog $audit (Get-Date -Format 'yyyy-MM-dd HH:mm')
+  $auditBad = @($audit | Where-Object { $_.Level -ne 'OK' })
+  $auditMsg = ''
+  if ($auditBad.Count -eq 0) {
+    Say "Git audit: all repos pushed and clean."
+  } else {
+    foreach ($a in $auditBad) { Say ("  {0}: {1} - {2}" -f $a.Level, $a.Name, $a.Note) }
+    $auditMsg = ' | AUDIT: ' + ((($auditBad | ForEach-Object { "$($_.Name) [$($_.Level)] $($_.Note)" })) -join '; ')
+  }
+
   # Drop nested (source) .gitignore files so their rules do NOT hide backed-up
   # working files (config.yaml, logs\trades.csv, state.db, reports). Only the
   # repo-root .gitignore governs; secrets are excluded by robocopy + secret scan.
@@ -331,7 +494,12 @@ try {
     exit 0
   }
 
-  if ($changed -eq 0) { Say "No changes - nothing to commit."; Send-Telegram "OK: no changes."; exit 0 }
+  # git-audit.md changes on every run, so 'nothing to commit' can no longer
+  # happen. Report source changes separately from the audit-only case.
+  $srcChanged = @(git -C $RepoRoot diff --cached --name-only) | Where-Object { $_ -ne 'git-audit.md' }
+  $srcCount = @($srcChanged).Count
+  if ($changed -eq 0) { Say "No changes - nothing to commit."; Send-Telegram "OK: no changes.$auditMsg"; exit 0 }
+  if ($srcCount -eq 0) { Say "No source changes - committing audit log only." }
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm'
   Push-Location $RepoRoot
@@ -345,7 +513,8 @@ try {
   Pop-Location
 
   Say "Done: $changed file(s) changed, pushed to $Branch."
-  Send-Telegram "OK: $changed file(s) changed, pushed to branch $Branch (commit backup $stamp)."
+  if ($auditBad.Count -gt 0) { $lead = 'OK (audit warnings)' } else { $lead = 'OK' }
+  Send-Telegram "${lead}: $changed file(s) changed, pushed to branch $Branch (commit backup $stamp).$auditMsg"
   exit 0
 }
 catch {

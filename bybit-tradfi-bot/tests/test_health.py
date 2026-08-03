@@ -41,8 +41,22 @@ class DummyNotifier:
         return True
 
 
-def mk():
-    return HealthMonitor(DummyNotifier(), FakeCfg(), broker=None, source=None)
+class _FakeState:
+    """meta-таблица State: в ней живёт день последней суточной сводки."""
+
+    def __init__(self):
+        self.meta = {}
+
+    def get_meta(self, key):
+        return self.meta.get(key)
+
+    def set_meta(self, key, value):
+        self.meta[key] = value
+
+
+def mk(state=None):
+    return HealthMonitor(DummyNotifier(), FakeCfg(), broker=None, source=None,
+                         state=state)
 
 
 def R(key, ok, detail="причина", remedy="что делать"):
@@ -279,12 +293,41 @@ def test_webhook_failure_notifies_with_its_title():
     assert any("Резервный webhook-буфер" in x and "буфер недоступен" in x for x in msgs)
 
 
-def test_daily_summary_skipped_first_day_if_started_after_time():
-    m = mk()
+def test_daily_summary_sent_on_start_after_missed_time():
+    """Старт после времени сводки — сводка уходит сразу, а не пропадает.
+
+    Бот живёт 09:30–23:20, время сводки 09:00 приходится на простой. Раньше
+    стартовый заход помечал день отправленным и следующее 09:00 бот уже не видел:
+    за неделю не ушло ни одной сводки, и неделя нулевых сигналов прошла молча.
+    """
+    state = _FakeState()
+    m = mk(state)
     n = m.notifier
     m._maybe_daily_summary(_ts(2026, 7, 21, 10, 0))   # старт уже после 09:00
-    assert n.sent == []
-    m._maybe_daily_summary(_ts(2026, 7, 21, 23, 0))
-    assert n.sent == []
-    m._maybe_daily_summary(_ts(2026, 7, 22, 9, 0))    # завтра в срок — уйдёт
+    assert len(n.sent) == 1 and "Жив" in n.sent[0]
+    m._maybe_daily_summary(_ts(2026, 7, 21, 23, 0))   # тот же день — без повтора
     assert len(n.sent) == 1
+    m._maybe_daily_summary(_ts(2026, 7, 22, 9, 30))   # следующий день — снова
+    assert len(n.sent) == 2
+
+
+def test_daily_summary_not_duplicated_after_restart_same_day():
+    """Несколько запусков за сутки не должны дублировать сводку (день в State)."""
+    state = _FakeState()
+    m1 = mk(state)
+    m1._maybe_daily_summary(_ts(2026, 7, 21, 10, 0))
+    assert len(m1.notifier.sent) == 1
+
+    m2 = mk(state)                                    # рестарт в тот же день
+    m2._maybe_daily_summary(_ts(2026, 7, 21, 14, 0))
+    assert m2.notifier.sent == []
+
+
+def test_goodbye_reports_session_counters():
+    """Сообщение об останове несёт итог сессии — иначе тихий день не видно."""
+    m = mk(_FakeState())
+    m.metrics.on_signal()
+    m.metrics.on_order()
+    m.goodbye()
+    assert len(m.notifier.sent) == 1
+    assert "сигналов: 1" in m.notifier.sent[0] and "ордеров: 1" in m.notifier.sent[0]

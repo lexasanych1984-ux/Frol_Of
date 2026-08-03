@@ -53,9 +53,18 @@ const BOT_ENV = process.env.WATCHDOG_BOT_ENV || 'C:\\Users\\lexas\\bybit-tradfi-
 const STREAMS = [
   // 2026-07-21: алерты пересозданы с webhook (облачный буфер) — новые alert_id.
   // 2026-07-24: CRT-алерт пересоздан на v25 (инвалидация→ОТМЕНА, alert()-триггер) — новый id.
-  { alert_id: 5198786079, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
-  { alert_id: 5198805822, name: 'SMC GBPJPY 15m', strategy: 'smc',    expected_active: true },
-  { alert_id: 5198806498, name: 'SMC GBPJPY 1H',  strategy: 'smc',    expected_active: true },
+  // 2026-07-30: все три SMC пересозданы на v24 (в скрипт добавлен max_bars_back=100 —
+  //   лечение «Остановлено — Ошибка расчёта», убившей EURUSD-алерт 29.07) — новые id.
+  // 2026-08-01: EURUSD переведён на ОТДЕЛЬНЫЙ скрипт «SMC 2-е колено v25 POI»
+  //   (pine USER;bfab6682…, ver 2.0) ради тайм-стопа maxHoldH=42. У v25 пять лишних
+  //   инпутов, поэтому in_32…in_36 значат не то, что в v24 — эталон v24 на него
+  //   переигрывать НЕЛЬЗЯ. Старый алерт 5261914051 удалён. Новый id ниже.
+  // 2026-08-02: пол стопа EURUSD поднят 20 → 30 пипсов (in_27 = minStopPip) по итогам A/B
+  //   docs/smc-v25-stopfloor-ab-2026-08-02.md — принята ячейка A. Алерт пересоздан копией
+  //   живого (отличие ровно в in_27), старый 5272544462 удалён. Новый id ниже.
+  { alert_id: 5274108372, name: 'SMC EURUSD 15m', strategy: 'smc',    expected_active: true },
+  { alert_id: 5261914152, name: 'SMC GBPJPY 15m', strategy: 'smc',    expected_active: true },
+  { alert_id: 5261914285, name: 'SMC GBPJPY 1H',  strategy: 'smc',    expected_active: true },
   { alert_id: 5222165117, name: 'CRT GER40 1H',   strategy: 'crt',    expected_active: true },
   { alert_id: 5198807488, name: 'Asia GER40 5m',  strategy: 'asweep', expected_active: true },
   { alert_id: 5198837287, name: 'Asia NAS100 5m', strategy: 'asweep', expected_active: true },
@@ -277,6 +286,14 @@ function diffStream(etalon, live) {
   if (etalon.pine_version && String(live.pine_version) !== String(etalon.pine_version)) {
     issues.push({ field: 'версия скрипта', was: etalon.pine_version, now: live.pine_version });
   }
+  // Текст сообщения — это РОВНО то, что парсит бот: любой лишний префикс или
+  // потерянный {{strategy.order.alert_message}} ломает исполнение сигнала.
+  // 30.07.2026 переименование алерта приклеило имя к телу сообщения, и сторож
+  // этого не увидел — сверял только инпуты/символ/ТФ/версию. undefined в эталоне
+  // = снят до появления проверки, тогда молчим до следующего --baseline.
+  if (etalon.message !== undefined && String(live.message) !== String(etalon.message)) {
+    issues.push({ field: 'текст сообщения', was: etalon.message, now: live.message });
+  }
   const eIn = etalon.inputs || {};
   const lIn = live.inputs || {};
   const keys = Array.from(new Set([...Object.keys(eIn), ...Object.keys(lIn)]))
@@ -315,6 +332,7 @@ async function runBaseline() {
       resolution: a.resolution,
       pine_id: a.pine_id,
       pine_version: a.pine_version,
+      message: a.message ?? null,        // то, что реально парсит бот
       expected_active: s.expected_active,
       live_active_at_baseline: a.active,
       inputs: a.inputs || {},

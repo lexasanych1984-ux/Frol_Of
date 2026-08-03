@@ -3,7 +3,10 @@
 const CDP = require('C:/Users/lexas/.claude/tools/tradingview-mcp/node_modules/chrome-remote-interface');
 const { writeFileSync } = require('fs');
 
-const FIND = `(function(){var c=document.querySelector('.monaco-editor.pine-editor-monaco');if(!c)return null;var el=c,fk;for(var i=0;i<20;i++){if(!el)break;fk=Object.keys(el).find(function(k){return k.indexOf('__reactFiber$')===0});if(fk)break;el=el.parentElement}if(!fk)return null;var cur=el[fk];for(var d=0;d<15;d++){if(!cur)break;if(cur.memoizedProps&&cur.memoizedProps.value&&cur.memoizedProps.value.monacoEnv){var env=cur.memoizedProps.value.monacoEnv;if(env.editor&&typeof env.editor.getEditors==='function'){var eds=env.editor.getEditors();if(eds.length>0)return eds[0].getValue()}}cur=cur.return}return null})()`;
+// Берём инстанс с САМЫМ ДЛИННЫМ содержимым, а не getEditors()[0]: нулевой бывает
+// пустым (после переоткрытия панели Pine их несколько), и скрипт падал с
+// «editor not found» на живом редакторе с кодом.
+const FIND = `(function(){var c=document.querySelector('.monaco-editor.pine-editor-monaco');if(!c)return null;var el=c,fk;for(var i=0;i<25;i++){if(!el)break;fk=Object.keys(el).find(function(k){return k.indexOf('__reactFiber$')===0});if(fk)break;el=el.parentElement}if(!fk)return null;var cur=el[fk];for(var d=0;d<60;d++){if(!cur)break;if(cur.memoizedProps&&cur.memoizedProps.value&&cur.memoizedProps.value.monacoEnv){var env=cur.memoizedProps.value.monacoEnv;if(env.editor&&typeof env.editor.getEditors==='function'){var best='';env.editor.getEditors().forEach(function(ed){var v=ed.getValue()||'';if(v.length>best.length)best=v});return best||null}}cur=cur.return}return null})()`;
 
 (async () => {
   const [targetId, out] = process.argv.slice(2);

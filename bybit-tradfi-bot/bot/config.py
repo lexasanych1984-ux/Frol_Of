@@ -166,6 +166,21 @@ class Config:
             return None
         return self.symbol_map.get(tv_ticker) or self.symbol_map.get(tv_ticker.upper())
 
+    def risk_pct(self, strategy: Optional[str] = None) -> float:
+        """% equity на сделку с учётом переопределения по стратегии.
+
+        Риск обязан совпадать с riskPct в самой стратегии TradingView, иначе
+        форвард-тест не сойдётся с бэктестом: SMC задеплоен на 2%, CRT Day и
+        Asia Sweep — на 1%. Ключ per_strategy — как в magic-карте (smc/crt/asweep).
+        """
+        risk = self.risk or {}
+        if strategy:
+            per = risk.get("per_strategy") or {}
+            ov = per.get(strategy) or per.get(strategy.lower())
+            if isinstance(ov, dict) and ov.get("risk_pct_per_trade") is not None:
+                return float(ov["risk_pct_per_trade"])
+        return float(risk.get("risk_pct_per_trade", 1.0))
+
     def _abs(self, rel: str) -> Path:
         p = Path(rel)
         return p if p.is_absolute() else (ROOT / p)

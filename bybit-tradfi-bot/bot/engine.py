@@ -39,6 +39,8 @@ class Engine:
         # Защита протухших сигналов (общая для всех источников). getattr —
         # чтобы движок работал и со «скелетным» Config из юнит-тестов.
         self.freshness: FreshnessCfg = getattr(cfg, "freshness", None) or FreshnessCfg()
+        # Тексты нераспознанных алертов, о которых уже предупреждали (анти-шум).
+        self._unparsed_seen: set[str] = set()
 
     def handle_raw(self, raw_message: str, *, received_ts: Optional[float] = None,
                    source: Optional[str] = None, ext_id: Optional[str] = None) -> None:
@@ -50,7 +52,18 @@ class Engine:
         """
         sig = parse(raw_message)
         if sig is None:
-            log.warning("Не распознан алерт: %r", raw_message[:200])
+            # Рисованные алерты пользователя (Liq/FVG/IDM) тоже имеют webhook и
+            # долетают сюда десятками — WARNING на каждый повтор топит лог, и в
+            # этом шуме теряется настоящая поломка (сломанный алерт стратегии
+            # выглядит так же). Первый раз для каждого текста — WARNING, повторы
+            # того же текста за сессию — DEBUG.
+            key = raw_message[:200]
+            if key in self._unparsed_seen:
+                log.debug("Не распознан алерт (повтор): %r", key)
+            else:
+                self._unparsed_seen.add(key)
+                log.warning("Не распознан алерт: %r — бот исполняет только "
+                            "сигналы стратегий", key)
             return
         tag = f" [{source}{'#' + ext_id if ext_id else ''}]" if source else ""
         log.info("СИГНАЛ%s: %s", tag, sig)
@@ -192,7 +205,7 @@ class Engine:
         появится при срабатывании — тогда факт остаётся пустым и досчитывается
         отчётом из истории MT5 по position_id.
         """
-        target = float(self.cfg.risk.get("risk_pct_per_trade", 1.0))
+        target = self.cfg.risk_pct(sig.strategy)
         equity = account.equity
         plan_risk_amount = round(equity * target / 100.0, 2)
         is_market = sig.order_kind is OrderKind.MARKET
@@ -329,7 +342,8 @@ class Engine:
         if self.cfg.dry_run:
             log.info("  ↳ [DRY_RUN] перенёс бы SL в безубыток %s", where)
             return
-        res = self.broker.modify_sl_to_entry(mt5_symbol, sig.side)
+        res = self.broker.modify_sl_to_entry(mt5_symbol, sig.side,
+                                             magic=magic_for(sig.strategy))
         log.info("  ↳ БУ %s: %s", "✅" if res.ok else "⚠️", res.detail)
         if res.ok:
             self._notify(f"🟡 БУ · стоп в безубыток · {(sig.strategy or '?').upper()} · "
@@ -350,7 +364,8 @@ class Engine:
             log.info("  ↳ [DRY_RUN] закрыл бы позицию %s %s", mt5_symbol,
                      sig.side.value if sig.side else "(любую)")
             return
-        res = self.broker.close_position(mt5_symbol, sig.side)
+        res = self.broker.close_position(mt5_symbol, sig.side,
+                                         magic=magic_for(sig.strategy))
         log.info("  ↳ закрытие %s: %s", "✅" if res.ok else "⚠️", res.detail)
         if res.ok:
             self._notify(f"⏹ ВЫХОД · закрытие позиции · {(sig.strategy or '?').upper()} · "

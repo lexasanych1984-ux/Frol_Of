@@ -1,2 +1,13 @@
-- [Strategy Lab — конструктор стратегий](strategy-lab-project.md) — что строим, статус v0.1, имя скрипта в TradingView, следующий шаг
-- [Работа с TradingView Desktop](tradingview-desktop-workflow.md) — заливка Pine с диска и что ломает его лэйаут
+- [START: хэндофф по SMC](smc-session-handoff-entrypoint.md) — читать первым; пол стопа 30 в бою, старый алерт ждёт удаления пользователем
+- [Работа с TradingView Desktop](tradingview-desktop-workflow.md) — заливка Pine с диска, создание нового скрипта и что ломает его лэйаут
+- [Пуш выполняет пользователь](git-push-runs-through-user.md) — push через ! с POSIX-путём; у tradingview-mcp origin чужой, свои коммиты идут веткой в Frol_Of
+- [Итог бэктеста SMC v25](smc-v25-poi-backtest-criteria.md) — POI-трекер и keepSetup отклонены, остаёмся на v24; ловушка формулы «winrate × 3R»
+- [Контрольный кейс SMC v25](smc-v25-acceptance-case.md) — EURUSD 30.07.2026: реальные границы FVG и зачем понадобился keepSetup
+- [Блокировка позицией в SMC](smc-position-blocking.md) — стратегия 45% времени в позиции, у открытой сделки нет тайм-стопа; ломает любой A/B
+- [Бимодальный MFE у SMC](smc-mfe-distribution.md) — сделка либо не доходит до 2R, либо берёт полный 3R; рычаг в отборе входов, не в тейке
+- [A/B пола стопа SMC](smc-v25-stopfloor-ab-result.md) — пол 30 принят в бой; рост expR это эффект знаменателя, прибыли +2.5R за 5 лет
+- [Форвард-чекпойнт 01.11.2026](smc-stopfloor-forward-checkpoint.md) — out-of-sample проверка эджа потока (WR ≤40% на ≥6 сделках = тревога) плюс пол стопа
+- [SMC не переносится на другие пары](smc-eurusd-specific.md) — AUDUSD и USDJPY в архиве, перебор инструментов запрещён без структурного обоснования
+- [Потоки GBPJPY](smc-gbpjpy-streams.md) — сидят на v24 без тайм-стопа, бот их не различает; протокол по ним не стартовать
+- [Стоп и R из отчёта тестера](smc-stop-and-r-from-tester.md) — восстановить пер-сделочный стоп в пипсах из qty, не трогая Pine
+- [Комиссия 0.055% против FX](repo-commission-standard-vs-fx.md) — круг стоит 12.6 пипса; считать cost/risk до прогона матрицы

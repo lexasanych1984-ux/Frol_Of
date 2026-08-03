@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 4227871c-d4f3-4f60-ad39-be9015a6311d
-  modified: 2026-07-21T12:08:54.024Z
+  modified: 2026-07-30T08:47:28.414Z
 ---
 
 Мониторинг живости (реализован 2026-07-21), принцип **молчание = авария**
@@ -24,7 +24,10 @@ metadata:
    Машина переходов OK↔FAIL с анти-спамом — `HealthMonitor.evaluate(results, now)`
    (чистая, без I/O, покрыта `tests/test_health.py`). Анти-спам: одна авария
    напоминает не чаще `HEALTH_ANTISPAM_SEC` (30 мин); переход OK→FAIL и FAIL→OK —
-   немедленно. Суточная сводка в `HEALTH_DAILY_SUMMARY_AT` (09:00).
+   немедленно. Суточная сводка в `HEALTH_DAILY_SUMMARY_AT` (09:00); с 30.07.2026
+   пропущенное время не съедается (бот стартует позже 09:00 — сводка уходит на
+   первой проверке), день отправки хранится в State, а итог сессии добавлен в
+   сообщение об останове. Аптайм бота и окна стратегий — [[trading-windows-uptime]].
 
 2. **Внешний watchdog** (`tools/watchdog.py`, задача Планировщика раз в час,
    ставится `tools/install-watchdog-task.ps1`) — ловит падение всего процесса.

@@ -35,7 +35,7 @@ class ExecutionRecord:
     sl: Optional[float]
     tp: Optional[float]
     plan_rr: Optional[float]
-    target_risk_pct: float     # заданный риск (config.risk.risk_pct_per_trade)
+    target_risk_pct: float     # заданный риск (Config.risk_pct — с учётом per_strategy)
     plan_lots: float           # лот, который посчитал сайзинг
     plan_risk_amount: float    # target_risk_pct% от equity, в валюте счёта = 1R
     # ── ФАКТ (исполнение) ──

@@ -25,9 +25,10 @@ metadata:
 pine-исходников в `watchdog/labels.json`. СТРОГО read-only: ничего не пишет в TV,
 лейауты не переключает.
 
-6 потоков: SMC EURUSD 15m (5140264864), SMC GBPJPY 15m (5140434449),
-SMC GBPJPY 1H (5140434481) — pine `89bffcd5…` v23; CRT GER40 1H (5146158866) —
-pine `52d1b51d…` v21; Asia GER40 5m (5177587028), Asia NAS100 5m (5177587639) —
+6 потоков (ID сверены с живым TV 27.07.2026, эталон пересобран под них):
+SMC EURUSD 15m (5198786079), SMC GBPJPY 15m (5198805822),
+SMC GBPJPY 1H (5198806498) — pine `89bffcd5…` v23; CRT GER40 1H (5222165117) —
+pine `52d1b51d…` **v25**; Asia GER40 5m (5198807488), Asia NAS100 5m (5198837287) —
 pine `813c0176…` v20. `expected_active:true` у всех задан в манифесте STREAMS
 внутри `watchdog.mjs` (не снимается с живого). Лейаутов gold/serebro в аккаунте
 сейчас нет вовсе — «не трогать» соблюдается автоматически.
