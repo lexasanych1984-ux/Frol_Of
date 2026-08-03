@@ -52,6 +52,11 @@ class ExecutionRecord:
     adverse: Optional[int]          # 1 = проскальзывание УВЕЛИЧИЛО риск, иначе 0
     equity: float                   # equity счёта на момент входа
     dry_run: int = 0                # 1 — запись из dry-run (факт оценочный)
+    # Стоимость тика в валюте счёта, по которой считался лот (после конвертации
+    # в MT5Broker.symbol_spec). Для не-USD инструментов зависит от кросс-курса,
+    # поэтому её дрейф между сделками должен быть виден в журнале, а не угадываться.
+    tick_value: Optional[float] = None
+    tick_size: Optional[float] = None
 
 
 _HEADER = [f.name for f in fields(ExecutionRecord)]
