@@ -66,11 +66,44 @@ def default_path() -> Path:
     return Path(__file__).resolve().parent.parent / "logs" / "executions.csv"
 
 
+def migrate_header(path) -> bool:
+    """Дописать в старый файл колонки, появившиеся в ExecutionRecord позже.
+
+    Файл append-only и переживает версии бота, поэтому набор полей в нём может
+    отставать от кода. Без миграции новая запись легла бы под старый заголовок
+    со сдвигом — лог молча стал бы мусором, а заметили бы это через месяц по
+    кривому отчёту. Старые строки получают пустые значения в новых колонках.
+
+    Возвращает True, если файл переписан.
+    """
+    p = Path(path)
+    if not p.exists() or p.stat().st_size == 0:
+        return False
+    with open(p, "r", newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f, delimiter=";"))
+    with open(p, "r", encoding="utf-8-sig") as f:
+        old = (f.readline().strip("\r\n").split(";") if f else [])
+    if old == _HEADER:
+        return False
+
+    tmp = p.with_suffix(p.suffix + ".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(_HEADER)
+        for row in rows:
+            w.writerow([row.get(k, "") if row.get(k) is not None else ""
+                        for k in _HEADER])
+    tmp.replace(p)  # атомарная замена: обрыв на полпути не съест лог
+    return True
+
+
 def append(path, rec: ExecutionRecord) -> None:
     """Дописать строку. Заголовок пишется только при создании файла."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     new = not p.exists() or p.stat().st_size == 0
+    if not new:
+        migrate_header(p)
     with open(p, "a", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f, delimiter=";")
         if new:
