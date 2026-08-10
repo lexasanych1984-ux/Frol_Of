@@ -308,6 +308,38 @@ def cmd_stats(cfg, log):
     else:
         log.info("Открытых позиций сейчас нет.")
     broker.shutdown()
+    _warn_demo_expiry(cfg, log)
+
+
+def _warn_demo_expiry(cfg, log) -> None:
+    """Напомнить о переезде, пока демо-счёт ещё жив.
+
+    Живёт внутри ежедневной задачи «daily journal»: она и так ходит каждый день,
+    так что отдельная задача в Планировщике (ещё одна точка отказа) не нужна.
+    В лог пишем всегда, в Telegram — только с warn_from_day, чтобы напоминание
+    не превратилось в ежедневный шум, который перестают читать.
+    """
+    from bot import demolife
+
+    opened = cfg.demo_account.opened_date()
+    if opened is None:
+        if cfg.demo_account.opened:
+            log.warning("demo_account.opened = %r — не дата в формате YYYY-MM-DD, "
+                        "напоминание о переезде выключено", cfg.demo_account.opened)
+        return
+
+    st = demolife.status(
+        opened,
+        lifetime_days=cfg.demo_account.lifetime_days,
+        warn_from_day=cfg.demo_account.warn_from_day,
+        urgent_from_day=cfg.demo_account.urgent_from_day,
+    )
+    (log.warning if st.should_notify else log.info)("%s", st.text)
+    if not st.should_notify:
+        return
+    from bot.notify import TelegramNotifier
+    TelegramNotifier(cfg.telegram_token, cfg.telegram_chat_id,
+                     cfg.telegram_prefix).send(st.text)
 
 
 def _parse_report_args(argv):

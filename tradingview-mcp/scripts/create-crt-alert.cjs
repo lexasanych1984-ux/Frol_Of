@@ -1,8 +1,15 @@
 // Создаёт strategy-алерт «Исполнение ордера» для CRT Day 1H GER40 через внутренний REST TV.
 // Структура — по образцу create-smc-alert.cjs (боевые алерты SMC/ASweep).
-const CDP = require('C:/Users/lexas/.claude/tools/tradingview-mcp/node_modules/chrome-remote-interface');
+// Использование: node create-crt-alert.cjs <targetId>
+// targetId — id вкладки с нужным графиком, взять из tab_list / CDP /json.
+const path = require('path');
+const CDP = require(path.join(__dirname, '..', 'node_modules', 'chrome-remote-interface'));
 
-const TARGET_ID = '11DC139399CC1C70E549E1E6EAB445C1'; // вкладка CRT D-1H
+const TARGET_ID = process.argv[2];
+if (!TARGET_ID) {
+  console.log(JSON.stringify({ ok: false, err: 'usage: create-crt-alert.cjs <targetId>' }));
+  process.exit(1);
+}
 
 const inputs = {
   in_0: true, in_1: 1773100800000, in_2: false, in_3: true, in_4: true, in_5: true, in_6: 3,

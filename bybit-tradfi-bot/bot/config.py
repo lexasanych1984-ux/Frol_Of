@@ -129,6 +129,25 @@ class FreshnessCfg:
 
 
 @dataclass
+class DemoAccountCfg:
+    """Срок жизни демо-счёта — под напоминание о переезде (bot/demolife.py).
+
+    opened пустой = напоминание выключено (например, на реальном счёте).
+    """
+    opened: str = ""               # ISO-дата открытия счёта, YYYY-MM-DD
+    lifetime_days: int = 14
+    warn_from_day: int = 10
+    urgent_from_day: int = 12
+
+    def opened_date(self):
+        from datetime import date
+        try:
+            return date.fromisoformat(self.opened.strip()) if self.opened else None
+        except ValueError:
+            return None
+
+
+@dataclass
 class Config:
     # env
     env: str                       # demo | live
@@ -148,6 +167,7 @@ class Config:
     webhook: WebhookCfg = field(default_factory=WebhookCfg)
     notion: NotionCfg = field(default_factory=NotionCfg)
     freshness: FreshnessCfg = field(default_factory=FreshnessCfg)
+    demo_account: DemoAccountCfg = field(default_factory=DemoAccountCfg)
     # yaml
     symbol_map: dict = field(default_factory=dict)
     risk: dict = field(default_factory=dict)
@@ -254,6 +274,13 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
                                 _int(fresh_yaml.get("manage_max_age_sec"), 21600)),
         per_strategy=fresh_yaml.get("per_strategy", {}) or {},
     )
+    demo_yaml = y.get("demo_account", {}) or {}
+    demo_account = DemoAccountCfg(
+        opened=str(demo_yaml.get("opened") or ""),
+        lifetime_days=_int(str(demo_yaml.get("lifetime_days") or ""), 14),
+        warn_from_day=_int(str(demo_yaml.get("warn_from_day") or ""), 10),
+        urgent_from_day=_int(str(demo_yaml.get("urgent_from_day") or ""), 12),
+    )
 
     return Config(
         env=os.getenv("BYBIT_ENV", "demo"),
@@ -272,6 +299,7 @@ def load(env_path: Optional[str] = None, yaml_path: Optional[str] = None) -> Con
         webhook=webhook,
         notion=notion,
         freshness=freshness,
+        demo_account=demo_account,
         symbol_map=y.get("symbol_map", {}) or {},
         risk=y.get("risk", {}) or {},
         guards=y.get("guards", {}) or {},

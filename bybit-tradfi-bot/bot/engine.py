@@ -254,6 +254,8 @@ class Engine:
             adverse=(1 if (slip and slip.adverse) else 0),
             equity=round(equity, 2),
             dry_run=1 if dry else 0,
+            tick_value=spec.tick_value,
+            tick_size=spec.tick_size,
         )
         try:
             execlog.append(self.exec_log_path, rec)

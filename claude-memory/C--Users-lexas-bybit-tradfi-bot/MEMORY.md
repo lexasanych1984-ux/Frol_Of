@@ -13,4 +13,5 @@
 - [TV сам глушит алерты](tv-alert-stopped-by-error.md) — «Остановлено — Ошибка расчёта» видно только в DOM панели; перезапуск через alert-restart-button; конфиг-сторож теперь почасовой.
 - [Окна торговли и аптайм](trading-windows-uptime.md) — ночь и Азию держать НЕ нужно; окно диапазона ≠ окно торговли; зазоры на краях дня (утро 10:00, хвост CRT до 00:00).
 - [«ВЫХОД» = отражение SL/TP](exit-alerts-are-sl-tp-mirrors.md) — досрочных выходов у стратегий нет, on_exit_alert=ignore корректен (проверено по MT5 и Strategy Tester).
+- [Издержки Just2Trade](just2trade-costs-zero-commission.md) — комиссии на демо не было вообще (Standard = spread-only); свопы асимметричны; GER30m = $1.15/пункт, не $1.00.
 - [Время MT5 = время сервера](mt5-time-is-server-time.md) — epoch из MetaTrader5 это UTC+3; fromtimestamp врёт на +1 ч, на этом я уже ошибся.

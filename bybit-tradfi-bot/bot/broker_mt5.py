@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from typing import List, Optional
@@ -12,6 +13,8 @@ from typing import List, Optional
 from .config import MT5Creds
 from .model import OrderKind, Side, Signal
 from .sizing import SymbolSpec
+
+log = logging.getLogger("bot")
 
 # Magic-номер кодирует стратегию: он навсегда сохраняется в истории сделок MT5,
 # по нему run.py stats считает статистику раздельно по стратегиям.
@@ -79,6 +82,8 @@ class MT5Broker:
         self.pending_expire = "gtc"
         self.pending_window_end = "2300"
         self.pending_window_tz = "Europe/Moscow"
+        # символы, по которым уже предупредили о неконвертированной стоимости тика
+        self._tick_value_warned: set = set()
 
     # ── Подключение ───────────────────────────────────────────────────────────
     def connect(self) -> None:
@@ -126,14 +131,87 @@ class MT5Broker:
         s = self.mt5.symbol_info(symbol)
         if s is None:
             return None
+        tick_size = s.trade_tick_size or s.point
+        # Для сайзинга нужна стоимость тика в УБЫТОК: у части символов брокер
+        # разводит profit/loss (разные стороны конвертации). Если поля нет —
+        # откатываемся на общий trade_tick_value.
+        tick_value = getattr(s, "trade_tick_value_loss", 0.0) or s.trade_tick_value
+        tick_value = self._tick_value_in_account_currency(s, tick_size, tick_value)
         return SymbolSpec(
             name=s.name,
             volume_min=s.volume_min,
             volume_max=s.volume_max,
             volume_step=s.volume_step,
-            tick_size=s.trade_tick_size or s.point,
-            tick_value=s.trade_tick_value,
+            tick_size=tick_size,
+            tick_value=tick_value,
         )
+
+    def _tick_value_in_account_currency(self, s, tick_size: float,
+                                        tick_value: float) -> float:
+        """Стоимость тика в валюте счёта — с конвертацией, если MT5 её не сделал.
+
+        MT5 обязан отдавать trade_tick_value уже в валюте счёта, и для FX
+        Just2Trade так и делает (GBPJPY: 100 JPY за тик → 0.638 USD). Но для
+        индексных мини (GER30m: currency_profit=EUR, contract=1) он отдаёт
+        0.1 — это ровно tick_size × contract_size, то есть СЫРОЕ значение в EUR,
+        без конвертации. На этом в июле 2026 бот и погорел: GER30m сайзился по
+        $1.00/пункт вместо фактических ~$1.15 → риск 1.17% вместо 1.00%
+        (docs/just2trade-actual-costs.md).
+
+        Отличаем одно от другого по признаку «значение равно сырому»: если MT5
+        сконвертировал, оно от сырого отличается. Если курс и так ≈1, обе ветки
+        дают один ответ, так что ложное срабатывание безвредно.
+        """
+        profit_ccy = (getattr(s, "currency_profit", "") or "").upper()
+        acc = self.mt5.account_info()
+        acc_ccy = (acc.currency if acc else "").upper()
+        if not profit_ccy or not acc_ccy or profit_ccy == acc_ccy:
+            return tick_value
+
+        raw = tick_size * (getattr(s, "trade_contract_size", 0.0) or 0.0)
+        if raw <= 0 or abs(tick_value - raw) > raw * 1e-6:
+            return tick_value  # MT5 уже сконвертировал — не трогаем
+
+        rate = self._cross_rate(profit_ccy, acc_ccy)
+        if rate is None:
+            log.error("%s: MT5 отдал стоимость тика в %s (%.6g) и кросс-курса "
+                      "%s%s в терминале нет — сайзинг посчитает риск НЕВЕРНО",
+                      s.name, profit_ccy, tick_value, profit_ccy, acc_ccy)
+            return tick_value
+
+        converted = tick_value * rate
+        # Раз на символ: срабатывание эвристики на НОВОМ инструменте должно быть
+        # заметно (иначе перебор риска опять уедет молча), но symbol_spec зовётся
+        # на каждый сигнал — ежедневный повтор одного и того же превратился бы в шум.
+        if s.name not in self._tick_value_warned:
+            self._tick_value_warned.add(s.name)
+            log.warning("%s: MT5 отдал стоимость тика без конвертации (%.6g %s = "
+                        "tick_size × contract_size); пересчитал по %s%s=%.5f → "
+                        "%.6g %s. Так ведёт себя GER30m; если это НОВЫЙ символ — "
+                        "проверь риск первой сделки по нему",
+                        s.name, tick_value, profit_ccy, profit_ccy, acc_ccy,
+                        rate, converted, acc_ccy)
+        else:
+            log.debug("%s: стоимость тика пересчитана по %s%s=%.5f → %.6g %s",
+                      s.name, profit_ccy, acc_ccy, rate, converted, acc_ccy)
+        return converted
+
+    def _cross_rate(self, frm: str, to: str) -> Optional[float]:
+        """Сколько единиц `to` в одной единице `frm` по текущему рынку."""
+        if frm == to:
+            return 1.0
+        for name, invert in ((f"{frm}{to}", False), (f"{to}{frm}", True)):
+            if not self.mt5.symbol_select(name, True):
+                continue
+            tick = self.mt5.symbol_info_tick(name)
+            if tick is None:
+                continue
+            # середина рынка: конвертация не сделка, сторону закладывать не за что
+            mid = (tick.bid + tick.ask) / 2.0 if tick.ask else tick.bid
+            if not mid:
+                continue
+            return (1.0 / mid) if invert else mid
+        return None
 
     # ── Исполнение ────────────────────────────────────────────────────────────
     AUTOTRADING_HINT = (
