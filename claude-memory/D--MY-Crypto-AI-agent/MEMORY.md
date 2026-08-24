@@ -2,3 +2,4 @@
 - [Notion changes require walkthrough](notion-changes-require-walkthrough.md) — never write to the trader's live Notion without approval + click-by-click demo; he restored the whole journal from backup after mistaking hidden duplicates for deleted trades (2026-07-08)
 - [Communicate in Russian](communicate-in-russian.md) — трейдер просит вести всё общение на русском языке
 - [Trader uses auto-journal](trader-uses-auto-journal.md) — трейдер перешёл на автожурнал «Trader»; ручное заполнение Notion (/sync, /trade) стало менее актуально, но проект просил доделать
+- [Bot paused](bot-paused.md) — Telegram-бот НА ПАУЗЕ с 2026-08-13 (экономия токенов); возобновление — resume.ps1; /sync, /trade план тоже приостановлен

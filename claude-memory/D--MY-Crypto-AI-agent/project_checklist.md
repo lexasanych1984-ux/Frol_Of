@@ -5,7 +5,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: fefa66b6-03dc-410f-a265-4ccfa486b6b9
-  modified: 2026-07-22T19:44:28.999Z
+  modified: 2026-08-13T19:17:16.844Z
 ---
 
 Project is "Trading Discipline AI" (`D:\MY\Crypto\AI agent`) — an AI system that makes a
@@ -204,6 +204,14 @@ Status as of 2026-07-02:
   on; catch-up on launch is by design). Trader plans to check the SUNDAY weekly digest
   2026-07-12 and iterate afterwards if needed. Known cosmetic quirk not yet fixed:
   bot sends plain text, so Claude's **bold** markers show as literal asterisks.
+
+- STATUS 2026-08-13: bot put ON PAUSE at trader's request (save API token spend) —
+  process stopped (was already not running), no Telegram notifications going out.
+  Nothing deleted/uninstalled: code, .env, git history, Notion integration all
+  intact. Full detail incl. resume command in [[bot-paused]]. Priority 4 work
+  (`/sync`/`/trade` — end-to-end acceptance walkthrough still pending per the
+  2026-07-22 entry above) is paused along with the bot — don't resume that work
+  until the trader asks to un-pause.
 
 **Why:** trader only trades 1-2x/week, so scheduled daily/morning reports were explicitly
 rejected as unnecessary — everything is on-demand (`/review`, `/risk`, future `/setup`,

@@ -2,7 +2,7 @@
 
 - [bybit-tradfi-bot](bybit-tradfi-bot.md) — бот для Bybit TradFi (MT5) на TV-сигналах; проект в C:\Users\lexas\bybit-tradfi-bot
 - [frol-trade-assistant](frol-trade-assistant.md) — самописная MQL5-панель ручной торговли в ручном MT5 (замена Trade Assistant Demo)
-- [tv-config-watchdog](tv-config-watchdog.md) — read-only сторож 6 боевых TV-алертов (watchdog/); эталон = живое при известном нефикснутом расхождении (CRT риск, SMC сессии)
+- [tv-config-watchdog](tv-config-watchdog.md) — read-only сторож 6 боевых TV-алертов (watchdog/) — НА ПАУЗЕ с 14.08.2026 (Планировщик Disabled); эталон = живое при известном нефикснутом расхождении (CRT риск, SMC сессии)
 - [bybit-bot-signal-delivery](bybit-bot-signal-delivery.md) — доставка сигналов боту (CDP + Cloudflare webhook-буфер), диагностика, разбор инцидента «2 дня нет сигналов» + нюанс Telegram (нет пуша на сделку)
 
 ## Трейдинг: стратегии и сопровождение (перенесено из домашнего проекта 23.07.2026 — канон теперь здесь)

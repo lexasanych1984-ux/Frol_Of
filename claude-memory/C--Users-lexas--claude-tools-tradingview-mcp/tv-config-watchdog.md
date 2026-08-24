@@ -1,20 +1,28 @@
 ---
 name: tv-config-watchdog
-description: Read-only сторож конфигов 6 боевых TV-алертов + известное расхождение эталона с интентом пользователя
+description: Read-only сторож конфигов 6 боевых TV-алертов — СЕЙЧАС НА ПАУЗЕ (задача Планировщика отключена 14.08.2026); известное расхождение эталона с интентом пользователя
 metadata: 
   node_type: memory
   type: project
   originSessionId: 9b8a2809-be29-4f34-ba2a-7d8d328927e5
-  modified: 2026-07-21T14:04:26.697Z
+  modified: 2026-08-14T11:14:44.067Z
 ---
 
+**СТАТУС: НА ПАУЗЕ с 14.08.2026.** TradingView Desktop не запущен, боты на
+паузе, проверки не нужны. Задача Планировщика `TV-Watchdog-Configs` переведена
+в `Disabled` (не удалена; сам скрипт, эталон, всё остальное не тронуто). Разово
+отправлено уведомление в Telegram `[WATCHDOG]` о паузе. Включить обратно:
+`Enable-ScheduledTask -TaskName TV-Watchdog-Configs` (проверить
+`Get-ScheduledTask TV-Watchdog-Configs` → `State: Ready`).
+
 Сторож конфигов TradingView в репозитории tradingview-mcp: `watchdog/` (Node,
-`watchdog.mjs`). 2×/день (Планировщик, задача **TV-Watchdog-Configs**, 09:15/21:15)
-сверяет живое состояние 6 боевых strategy-алертов с `watchdog/etalons.json` и шлёт
-в Telegram **[WATCHDOG]** (тот же канал, что heartbeat [[bybit-tradfi-bot]]) при
-любом расхождении; суточное OK раз в день; TV недоступен = тоже уведомление.
-Ручной запуск: `node watchdog\watchdog.mjs` (`--dry` без Telegram, `--baseline`
-пересъём эталона). Полная дока — `watchdog/README.md`. Создан 2026-07-21.
+`watchdog.mjs`). В штатном (не на паузе) режиме 2×/день (Планировщик, задача
+**TV-Watchdog-Configs**, 09:15/21:15) сверяет живое состояние 6 боевых
+strategy-алертов с `watchdog/etalons.json` и шлёт в Telegram **[WATCHDOG]**
+(тот же канал, что heartbeat [[bybit-tradfi-bot]]) при любом расхождении;
+суточное OK раз в день; TV недоступен = тоже уведомление. Ручной запуск:
+`node watchdog\watchdog.mjs` (`--dry` без Telegram, `--baseline` пересъём
+эталона). Полная дока — `watchdog/README.md`. Создан 2026-07-21.
 
 **Что сверяет — ЗАМОРОЖЕННЫЕ инпуты алертов** (`list_alerts` →
 `condition.series[].inputs`), НЕ инстансы на графике. Причина: strategy-алерт
