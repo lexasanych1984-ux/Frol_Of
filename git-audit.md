@@ -69,3 +69,14 @@ unpushed commits, push permission, uncommitted changes. Newest section last.
 | ai-agent | main | - | 0 | (none) | WARN | no remote: history exists only on this machine |
 | mql5-src | master | - | 0 | (none) | WARN | no remote: history exists only on this machine |
 
+## 2026-09-21 13:47
+
+| repo | branch | ahead | dirty | remote | level | note |
+|---|---|---|---|---|---|---|
+| tv-strategies | main | - | 0 | origin | ERROR | cannot read remote (auth or network) |
+| tradingview-mcp | main | - | 0 | mine | ERROR | cannot read remote (auth or network) |
+| bybit-tradfi-bot | master | - | 1 | origin | ERROR | cannot read remote (auth or network) |
+| projects-backup | projects-backup | - | 0 | origin | ERROR | cannot read remote (auth or network) |
+| ai-agent | main | - | 0 | (none) | WARN | no remote: history exists only on this machine |
+| mql5-src | master | - | 0 | (none) | WARN | no remote: history exists only on this machine |
+
